@@ -4,11 +4,16 @@ import { getCompleteFundamentals } from '@/lib/fmp/client'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 
 export async function GET() {
-  const items = await prisma.watchlistItem.findMany({
-    where: { isActive: true },
-    include: { stock: true },
-    orderBy: { addedAt: 'desc' },
-  })
+  let items: any[]
+  try {
+    items = await prisma.watchlistItem.findMany({
+      where: { isActive: true },
+      include: { stock: true },
+      orderBy: { addedAt: 'desc' },
+    })
+  } catch {
+    return Response.json([], { status: 200 })
+  }
 
   const enriched = await Promise.all(
     items.map(async (item) => {
@@ -88,7 +93,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const { id } = await request.json()
-  await prisma.watchlistItem.update({ where: { id }, data: { isActive: false } })
-  return Response.json({ success: true })
+  try {
+    const { id } = await request.json()
+    await prisma.watchlistItem.update({ where: { id }, data: { isActive: false } })
+    return Response.json({ success: true })
+  } catch {
+    return Response.json({ error: 'DB unavailable' }, { status: 503 })
+  }
 }
