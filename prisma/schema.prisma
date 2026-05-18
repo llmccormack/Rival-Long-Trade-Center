@@ -205,3 +205,15 @@ model QuarterlyRebalance {
   notes      String?
   actions    Json
 }
+
+model PortfolioSnapshot {
+  id         String   @id @default(cuid())
+  date       DateTime @default(now())
+  totalValue Float
+  totalCost  Float
+  gainLossPct Float
+  spyPrice   Float?
+  positions  Json
+
+  @@index([date])
+}

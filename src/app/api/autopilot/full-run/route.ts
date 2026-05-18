@@ -1,10 +1,11 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
-import { getCompleteFundamentals, getTickerNews } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 
 // POST /api/autopilot/full-run
 // Full pipeline: scan market → auto-populate watchlist → execute trades
@@ -102,6 +103,25 @@ export async function POST(request: NextRequest) {
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news)
 
+      // Skip if earnings within 21 days — don't buy into earnings uncertainty
+      const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
+      const today = new Date()
+      const earningsIn21Days = earningsEvents.some(e => {
+        const d = new Date(e.date)
+        const daysUntil = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+        return daysUntil >= 0 && daysUntil <= 21
+      })
+      if (earningsIn21Days) {
+        tradeResults.push({
+          ticker: item.stock.ticker,
+          action: 'SKIP',
+          score: philosophy.total,
+          mos: iv.marginOfSafety,
+          reason: 'Earnings within 21 days — waiting for clarity',
+        })
+        continue
+      }
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
         philosophy.total >= config.minPhilosophyScore &&
@@ -193,6 +213,44 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ── Step 3: Check sell signals on open positions ──────────────────────────
+  const openPositions = await prisma.paperPortfolioItem.findMany({
+    where: { isOpen: true },
+    include: { stock: true },
+  })
+
+  const sellResults: any[] = []
+  for (const pos of openPositions) {
+    try {
+      const f = await getCompleteFundamentals(pos.stock.ticker)
+      const posIv = calculateIntrinsicValue(f, f.sharesOutstanding)
+      const posNews = await getTickerNews(pos.stock.ticker).catch(() => undefined)
+      const sellSignal = scoreSellDecision(f, posIv, posNews, pos.mosAtPurchase ?? undefined)
+
+      if (sellSignal.shouldSell) {
+        await prisma.paperPortfolioItem.update({
+          where: { id: pos.id },
+          data: {
+            isOpen: false,
+            closePrice: f.price,
+            closedAt: new Date(),
+            closeReason: sellSignal.reason,
+          },
+        })
+        await prisma.alert.create({
+          data: {
+            ticker: pos.stock.ticker,
+            type: 'paper_sell',
+            message: `PAPER SELL: ${pos.stock.ticker} @ $${f.price.toFixed(2)} — ${sellSignal.reason}`,
+            severity: sellSignal.urgency === 'immediate' ? 'danger' : 'warning',
+          },
+        })
+        sellResults.push({ ticker: pos.stock.ticker, action: 'PAPER_SELL', reason: sellSignal.reason, urgency: sellSignal.urgency, price: f.price })
+      }
+      await new Promise(r => setTimeout(r, 200))
+    } catch { /* skip */ }
+  }
+
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
@@ -206,12 +264,18 @@ export async function POST(request: NextRequest) {
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
     results: tradeResults,
+    sells: sellResults.length, sellResults,
   }
 
   await prisma.autopilotConfig.update({
     where: { id: 'singleton' },
     data: { lastRunAt: new Date(), lastRunResult: summary },
   })
+
+  // Snapshot portfolio for performance tracking
+  try {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/performance`, { method: 'POST' })
+  } catch { /* best effort */ }
 
   return Response.json(summary)
 }

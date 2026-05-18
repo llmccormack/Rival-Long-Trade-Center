@@ -6,7 +6,8 @@ import { CriteriaRow } from '@/components/ui/CriteriaRow'
 import { MOSGauge } from '@/components/ui/MOSGauge'
 import { FundamentalChart } from '@/components/ui/FundamentalChart'
 import { formatCurrency, formatNumber, formatPct, cn } from '@/lib/utils'
-import { getCompleteFundamentals, getTickerNews } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getInsiderTransactions, getEarningsCalendar, getHistoricalValuationBands, getStockPeers } from '@/lib/fmp/client'
+import { ThesisPanel } from '@/components/ui/ThesisPanel'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
@@ -27,6 +28,22 @@ export default async function AnalysisPage({
     philosophy = scoreBuyDecision(fundamentals, criteria, iv, news ?? undefined)
   } catch {
     notFound()
+  }
+
+  let insider: Awaited<ReturnType<typeof getInsiderTransactions>> = []
+  let earnings: Awaited<ReturnType<typeof getEarningsCalendar>> = []
+  let valuationBands: Awaited<ReturnType<typeof getHistoricalValuationBands>> = []
+  let peers: Awaited<ReturnType<typeof getStockPeers>> = []
+
+  try {
+    ;[insider, earnings, valuationBands, peers] = await Promise.all([
+      getInsiderTransactions(ticker.toUpperCase(), 10).catch(() => []),
+      getEarningsCalendar(ticker.toUpperCase()).catch(() => []),
+      getHistoricalValuationBands(ticker.toUpperCase()).catch(() => []),
+      getStockPeers(ticker.toUpperCase()).catch(() => []),
+    ])
+  } catch {
+    // enrichment data is optional — page still renders without it
   }
 
   return (
@@ -55,6 +72,8 @@ export default async function AnalysisPage({
           )}
         </div>
       </div>
+
+      <ThesisPanel ticker={ticker.toUpperCase()} />
 
       {/* MOS + Key Valuation */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -245,6 +264,159 @@ export default async function AnalysisPage({
             )}
           </div>
         </section>
+      )}
+
+      {/* Earnings Calendar */}
+      {earnings.length > 0 && (() => {
+        const today = new Date()
+        const next = earnings.find(e => new Date(e.date) >= today)
+        const daysUntil = next ? Math.round((new Date(next.date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null
+        return (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h2 className="mb-3 text-xs font-medium uppercase tracking-widest text-zinc-500">Earnings Calendar</h2>
+            {next && (
+              <div className={cn(
+                'mb-3 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm',
+                daysUntil !== null && daysUntil <= 21
+                  ? 'border-amber-800/50 bg-amber-900/10 text-amber-400'
+                  : 'border-zinc-800 bg-zinc-900 text-zinc-400'
+              )}>
+                <span className="font-semibold">Next:</span>
+                <span>{next.date}</span>
+                {daysUntil !== null && <span className="text-xs text-zinc-500">({daysUntil} days)</span>}
+                {daysUntil !== null && daysUntil <= 21 && (
+                  <span className="ml-auto text-xs font-semibold text-amber-500">⚠ Autopilot will wait</span>
+                )}
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-zinc-800">
+                  {['Date', 'EPS Est.', 'EPS Act.', 'Beat?'].map(h => (
+                    <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4">{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {earnings.slice(0, 5).map((e, i) => (
+                    <tr key={i} className="py-1.5">
+                      <td className="py-2 pr-4 font-mono text-zinc-400">{e.date}</td>
+                      <td className="py-2 pr-4 font-mono text-zinc-500">{e.epsEstimated?.toFixed(2) ?? '—'}</td>
+                      <td className="py-2 pr-4 font-mono text-zinc-300">{e.eps?.toFixed(2) ?? '—'}</td>
+                      <td className="py-2">
+                        {e.eps !== null && e.epsEstimated !== null ? (
+                          <span className={cn('text-[10px] font-bold', e.eps >= e.epsEstimated ? 'text-emerald-400' : 'text-red-400')}>
+                            {e.eps >= e.epsEstimated ? 'BEAT' : 'MISS'}
+                          </span>
+                        ) : <span className="text-zinc-700">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Insider Activity */}
+      {insider.length > 0 && (() => {
+        const buys = insider.filter(t => t.transactionType?.includes('P'))
+        const sells = insider.filter(t => t.transactionType?.includes('S'))
+        return (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h2 className="mb-1 text-xs font-medium uppercase tracking-widest text-zinc-500">Insider Activity</h2>
+            <p className="mb-3 text-xs text-zinc-600">SEC Form 4 filings — officer and director transactions</p>
+            <div className="flex gap-4 mb-3 text-xs">
+              <span className="text-emerald-400 font-semibold">{buys.length} purchases</span>
+              <span className="text-red-400 font-semibold">{sells.length} sales</span>
+              {buys.length > sells.length && <span className="text-zinc-500">— Net insider buying (bullish signal)</span>}
+              {sells.length > buys.length * 2 && <span className="text-amber-500">— Heavy insider selling (caution)</span>}
+            </div>
+            <div className="space-y-1.5">
+              {insider.slice(0, 6).map((t, i) => {
+                const isBuy = t.transactionType?.includes('P')
+                return (
+                  <div key={i} className="flex items-center gap-3 text-xs rounded-lg border border-zinc-800/60 bg-zinc-900/40 px-3 py-2">
+                    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold border shrink-0',
+                      isBuy ? 'border-emerald-800 bg-emerald-900/30 text-emerald-400' : 'border-red-900 bg-red-900/20 text-red-400'
+                    )}>{isBuy ? 'BUY' : 'SELL'}</span>
+                    <span className="text-zinc-400 truncate">{t.reportingName}</span>
+                    <span className="text-zinc-600 shrink-0">{t.transactionDate?.slice(0,10)}</span>
+                    <span className="font-mono text-zinc-300 ml-auto shrink-0">
+                      {t.securitiesTransacted?.toLocaleString()} shares
+                      {t.price ? ` @ $${t.price.toFixed(2)}` : ''}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Historical Valuation */}
+      {valuationBands.length >= 3 && (() => {
+        const pes = valuationBands.map(v => v.pe).filter((p): p is number => p !== null && p > 0 && p < 100)
+        const avgPE = pes.length ? pes.reduce((a,b) => a+b, 0) / pes.length : null
+        const currentPE = fundamentals?.pe
+        const vsAvg = avgPE && currentPE ? ((currentPE - avgPE) / avgPE * 100) : null
+
+        return (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h2 className="mb-3 text-xs font-medium uppercase tracking-widest text-zinc-500">Historical Valuation Context</h2>
+            <p className="mb-3 text-xs text-zinc-600">Is today&apos;s price cheap vs this stock&apos;s own history?</p>
+
+            {currentPE && avgPE && (
+              <div className={cn(
+                'mb-4 rounded-lg border px-4 py-2.5 text-sm font-medium',
+                currentPE <= avgPE * 0.85 ? 'border-emerald-800/50 bg-emerald-900/10 text-emerald-400' :
+                currentPE >= avgPE * 1.15 ? 'border-amber-800/50 bg-amber-900/10 text-amber-400' :
+                'border-zinc-800 bg-zinc-900 text-zinc-400'
+              )}>
+                Current P/E {currentPE.toFixed(1)}× is {vsAvg !== null ? `${Math.abs(vsAvg).toFixed(0)}% ${vsAvg < 0 ? 'below' : 'above'}` : ''} its {valuationBands.length}-year average of {avgPE.toFixed(1)}×
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-zinc-800">
+                  {['Year', 'P/E', 'P/B', 'P/FCF'].map(h => (
+                    <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-6">{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {valuationBands.slice(-8).reverse().map((v, i) => (
+                    <tr key={i}>
+                      <td className="py-1.5 pr-6 font-mono text-zinc-500">{v.year}</td>
+                      <td className={cn('py-1.5 pr-6 font-mono', v.pe && v.pe > 0 ? 'text-zinc-300' : 'text-zinc-700')}>{v.pe?.toFixed(1) ?? '—'}</td>
+                      <td className={cn('py-1.5 pr-6 font-mono', v.pb && v.pb > 0 ? 'text-zinc-300' : 'text-zinc-700')}>{v.pb?.toFixed(1) ?? '—'}</td>
+                      <td className={cn('py-1.5 font-mono', v.pfcf && v.pfcf > 0 ? 'text-zinc-300' : 'text-zinc-700')}>{v.pfcf?.toFixed(1) ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Peer Comparison */}
+      {peers.length > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-widest text-zinc-500">Sector Peers</h2>
+          <div className="flex flex-wrap gap-2">
+            {peers.map(peer => (
+              <a
+                key={peer}
+                href={`/analysis/${peer}`}
+                className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-sm font-semibold text-zinc-300 hover:border-violet-700 hover:text-violet-400 transition-colors"
+              >
+                {peer}
+              </a>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-zinc-700">Click any peer to compare valuations</p>
+        </div>
       )}
 
       {/* 10-Year Trend Charts — NO price charts, fundamentals only */}

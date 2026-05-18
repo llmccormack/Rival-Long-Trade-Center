@@ -539,3 +539,118 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
   cache.set(cacheKey, result, FUNDAMENTALS_TTL)
   return result
 }
+
+// ─── Insider Transactions ─────────────────────────────────────────────────────
+export interface InsiderTransaction {
+  symbol: string
+  filingDate: string
+  transactionDate: string
+  reportingName: string
+  transactionType: string  // 'P-Purchase' | 'S-Sale' | etc
+  securitiesTransacted: number
+  price: number
+  securitiesOwned: number
+  typeOfOwner: string  // 'director' | 'officer' | 'other'
+}
+
+const INSIDER_TTL = 6 * 60 * 60 * 1000  // 6 hours
+
+export async function getInsiderTransactions(ticker: string, limit = 20): Promise<InsiderTransaction[]> {
+  const cacheKey = `insider:${ticker.toUpperCase()}`
+  const cached = cache.get<InsiderTransaction[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<InsiderTransaction[]>(`/insider-trading`, { symbol: ticker.toUpperCase(), limit })
+    const result = Array.isArray(data) ? data : []
+    cache.set(cacheKey, result, INSIDER_TTL)
+    return result
+  } catch { return [] }
+}
+
+// ─── Earnings Calendar ────────────────────────────────────────────────────────
+export interface EarningsEvent {
+  date: string
+  symbol: string
+  eps: number | null
+  epsEstimated: number | null
+  revenue: number | null
+  revenueEstimated: number | null
+  time: string  // 'bmo' | 'amc' | 'dmh'
+  fiscalDateEnding: string
+}
+
+export async function getEarningsCalendar(ticker: string): Promise<EarningsEvent[]> {
+  const cacheKey = `earnings:${ticker.toUpperCase()}`
+  const cached = cache.get<EarningsEvent[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<EarningsEvent[]>(`/historical/earning_calendar/${ticker.toUpperCase()}`, { limit: 8 })
+    const result = Array.isArray(data) ? data : []
+    cache.set(cacheKey, result, FUNDAMENTALS_TTL)
+    return result
+  } catch { return [] }
+}
+
+// ─── Historical Valuation Bands ───────────────────────────────────────────────
+export interface ValuationBand {
+  year: number
+  pe: number | null
+  pb: number | null
+  ps: number | null
+  pfcf: number | null
+}
+
+export async function getHistoricalValuationBands(ticker: string): Promise<ValuationBand[]> {
+  const cacheKey = `valbands:${ticker.toUpperCase()}`
+  const cached = cache.get<ValuationBand[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<any[]>(`/key-metrics/${ticker.toUpperCase()}`, { limit: 10 })
+    const result = (Array.isArray(data) ? data : []).map((m: any) => ({
+      year: parseInt(m.calendarYear ?? m.date?.slice(0,4)),
+      pe: m.peRatio ?? null,
+      pb: m.pbRatio ?? null,
+      ps: m.priceToSalesRatio ?? null,
+      pfcf: m.priceToFreeCashFlowsRatio ?? null,
+    })).filter((v: ValuationBand) => !isNaN(v.year)).reverse()
+    cache.set(cacheKey, result, FUNDAMENTALS_TTL)
+    return result
+  } catch { return [] }
+}
+
+// ─── Stock Peers ──────────────────────────────────────────────────────────────
+export interface StockPeer {
+  symbol: string
+}
+
+export async function getStockPeers(ticker: string): Promise<string[]> {
+  const cacheKey = `peers:${ticker.toUpperCase()}`
+  const cached = cache.get<string[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<any>(`/stock_peers`, { symbol: ticker.toUpperCase() })
+    const peers: string[] = data?.[0]?.peersList ?? []
+    cache.set(cacheKey, peers, FUNDAMENTALS_TTL)
+    return peers.slice(0, 6)
+  } catch { return [] }
+}
+
+// ─── Historical Price (for performance chart vs SPY) ─────────────────────────
+export interface DailyPrice {
+  date: string
+  close: number
+}
+
+const PRICE_TTL = 60 * 60 * 1000  // 1 hour
+
+export async function getHistoricalPrices(ticker: string, from: string, to: string): Promise<DailyPrice[]> {
+  const cacheKey = `prices:${ticker.toUpperCase()}:${from}:${to}`
+  const cached = cache.get<DailyPrice[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<any>(`/historical-price-full/${ticker.toUpperCase()}`, { from, to })
+    const result: DailyPrice[] = (data?.historical ?? []).map((d: any) => ({ date: d.date, close: d.close })).reverse()
+    cache.set(cacheKey, result, PRICE_TTL)
+    return result
+  } catch { return [] }
+}
