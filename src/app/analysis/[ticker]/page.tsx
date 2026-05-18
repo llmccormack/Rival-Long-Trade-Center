@@ -20,14 +20,31 @@ export default async function AnalysisPage({
   const { ticker } = await params
 
   let fundamentals, criteria, iv, philosophy, news
+  let fetchError: string | null = null
   try {
     fundamentals = await getCompleteFundamentals(ticker.toUpperCase())
     criteria = applyGrahamCriteria(fundamentals)
     iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
     news = await getTickerNews(ticker.toUpperCase()).catch(() => null)
     philosophy = scoreBuyDecision(fundamentals, criteria, iv, news ?? undefined)
-  } catch {
-    notFound()
+  } catch (err: any) {
+    const msg: string = err?.message ?? ''
+    if (msg.includes('404') || msg.includes('not found')) notFound()
+    fetchError = msg.includes('429')
+      ? 'FMP API rate limit reached — resets at midnight UTC. Try again tomorrow or search a cached ticker.'
+      : `Could not load data for ${ticker.toUpperCase()}: ${msg}`
+  }
+
+  if (fetchError || !fundamentals || !criteria || !iv || !philosophy) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 p-12 text-center">
+        <div className="rounded-xl border border-amber-800/40 bg-amber-900/10 px-6 py-5 max-w-md">
+          <div className="text-sm font-semibold text-amber-400 mb-1">{ticker.toUpperCase()}</div>
+          <p className="text-sm text-amber-400/80">{fetchError ?? 'No data available for this ticker.'}</p>
+        </div>
+        <a href="/analysis" className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">← Back to search</a>
+      </div>
+    )
   }
 
   let insider: Awaited<ReturnType<typeof getInsiderTransactions>> = []
