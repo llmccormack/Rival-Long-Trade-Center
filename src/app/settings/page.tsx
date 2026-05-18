@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useTradingMode } from '@/contexts/TradingMode'
 import { cn } from '@/lib/utils'
@@ -23,8 +23,33 @@ interface Health {
   ts: string
 }
 
-export default function SettingsPage() {
+const StatusDot = ({ ok }: { ok: boolean }) => (
+  <span className={cn('inline-flex h-2 w-2 rounded-full', ok ? 'bg-emerald-500' : 'bg-red-500')} />
+)
+
+function SchwabBanner() {
   const searchParams = useSearchParams()
+  const schwabStatus = searchParams.get('schwab')
+  if (!schwabStatus) return null
+  return (
+    <>
+      {schwabStatus === 'connected' && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-800/50 bg-emerald-900/15 px-4 py-3 text-sm text-emerald-400">
+          <StatusDot ok={true} />
+          Schwab account connected successfully.
+        </div>
+      )}
+      {schwabStatus === 'error' && (
+        <div className="flex items-center gap-2 rounded-xl border border-red-800/50 bg-red-900/15 px-4 py-3 text-sm text-red-400">
+          <StatusDot ok={false} />
+          Schwab connection failed: {searchParams.get('reason') ?? 'Unknown error'}
+        </div>
+      )}
+    </>
+  )
+}
+
+export default function SettingsPage() {
   const { mode, setMode } = useTradingMode()
   const [config, setConfig] = useState<Config | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
@@ -32,8 +57,6 @@ export default function SettingsPage() {
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<any>(null)
   const [saved, setSaved] = useState(false)
-
-  const schwabStatus = searchParams.get('schwab')
 
   useEffect(() => {
     Promise.all([
@@ -103,19 +126,9 @@ export default function SettingsPage() {
         <p className="mt-0.5 text-sm text-zinc-500">Autopilot configuration, API connections, and system status.</p>
       </div>
 
-      {/* Schwab connection status banner */}
-      {schwabStatus === 'connected' && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-800/50 bg-emerald-900/15 px-4 py-3 text-sm text-emerald-400">
-          <StatusDot ok={true} />
-          Schwab account connected successfully.
-        </div>
-      )}
-      {schwabStatus === 'error' && (
-        <div className="flex items-center gap-2 rounded-xl border border-red-800/50 bg-red-900/15 px-4 py-3 text-sm text-red-400">
-          <StatusDot ok={false} />
-          Schwab connection failed: {searchParams.get('reason') ?? 'Unknown error'}
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <SchwabBanner />
+      </Suspense>
 
       {/* System health */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
