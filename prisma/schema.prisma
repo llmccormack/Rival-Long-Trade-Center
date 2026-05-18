@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Stock {
+  id        String   @id @default(cuid())
+  ticker    String   @unique
+  name      String
+  sector    String?
+  industry  String?
+  exchange  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fundamentals      Fundamental[]
+  screenResults     ScreenResult[]
+  watchlistItems    WatchlistItem[]
+  portfolioItems    PortfolioItem[]
+  paperPortfolio    PaperPortfolioItem[]
+  intrinsicValues   IntrinsicValue[]
+}
+
+model Fundamental {
+  id      String @id @default(cuid())
+  stockId String
+  stock   Stock  @relation(fields: [stockId], references: [id])
+
+  year   Int
+  period String @default("annual")
+
+  revenue             Float?
+  grossProfit         Float?
+  operatingIncome     Float?
+  netIncome           Float?
+  eps                 Float?
+  epsDiluted          Float?
+  dividendPerShare    Float?
+  totalAssets         Float?
+  totalLiabilities    Float?
+  totalEquity         Float?
+  bookValuePerShare   Float?
+  currentAssets       Float?
+  currentLiabilities  Float?
+  longTermDebt        Float?
+  cash                Float?
+  operatingCashFlow   Float?
+  capitalExpenditures Float?
+  freeCashFlow        Float?
+  depreciation        Float?
+  pe                  Float?
+  pb                  Float?
+  debtToEquity        Float?
+  currentRatio        Float?
+  roe                 Float?
+  roic                Float?
+  ownerEarnings       Float?
+  price               Float?
+  marketCap           Float?
+  sharesOutstanding   Float?
+
+  fetchedAt DateTime @default(now())
+
+  @@unique([stockId, year, period])
+  @@index([stockId])
+}
+
+model IntrinsicValue {
+  id      String @id @default(cuid())
+  stockId String
+  stock   Stock  @relation(fields: [stockId], references: [id])
+
+  calculatedAt     DateTime @default(now())
+  currentPrice     Float
+  grahamNumber     Float?
+  dcfValue         Float?
+  intrinsicValue   Float
+  marginOfSafety   Float
+  isBuySignal      Boolean  @default(false)
+  ownerEarnings    Float?
+  growthRateUsed   Float?
+  discountRateUsed Float?
+  terminalGrowth   Float?
+
+  @@index([stockId])
+}
+
+model ScreenResult {
+  id      String @id @default(cuid())
+  stockId String
+  stock   Stock  @relation(fields: [stockId], references: [id])
+
+  screenedAt          DateTime @default(now())
+  passedPE            Boolean
+  passedPB            Boolean
+  passedCurrentRatio  Boolean
+  passedDebtToAssets  Boolean
+  passedEpsGrowth     Boolean
+  passedDividends     Boolean
+  passedNoDeficit     Boolean
+  overallPass         Boolean
+  peValue             Float?
+  pbValue             Float?
+  currentRatioValue   Float?
+  debtToAssetsValue   Float?
+  epsGrowthValue      Float?
+  dividendYears       Int?
+
+  @@index([stockId])
+  @@index([overallPass])
+}
+
+model WatchlistItem {
+  id          String   @id @default(cuid())
+  stockId     String   @unique
+  stock       Stock    @relation(fields: [stockId], references: [id])
+  addedAt     DateTime @default(now())
+  targetPrice Float?
+  notes       String?
+  isActive    Boolean  @default(true)
+}
+
+model PortfolioItem {
+  id              String   @id @default(cuid())
+  stockId         String
+  stock           Stock    @relation(fields: [stockId], references: [id])
+  shares          Float
+  avgCostBasis    Float
+  firstPurchased  DateTime
+  lastUpdated     DateTime @updatedAt
+  schwabAccountId String?
+  schwabOrderIds  String[] @default([])
+  notes           String?
+
+  @@index([stockId])
+}
+
+// Paper trading — simulated positions, never touches Schwab
+model PaperPortfolioItem {
+  id              String   @id @default(cuid())
+  stockId         String
+  stock           Stock    @relation(fields: [stockId], references: [id])
+  shares          Float
+  avgCostBasis    Float
+  currentPrice    Float?
+  firstPurchased  DateTime @default(now())
+  lastUpdated     DateTime @updatedAt
+  philosophyScore Int?
+  conviction      String?
+  mosAtPurchase   Float?
+  auditTrail      String[] @default([])
+  isOpen          Boolean  @default(true)
+  closedAt        DateTime?
+  closePrice      Float?
+  closeReason     String?
+
+  @@index([stockId])
+  @@index([isOpen])
+}
+
+// Persists autopilot settings server-side (mode, thresholds)
+model AutopilotConfig {
+  id                String   @id @default("singleton")
+  isEnabled         Boolean  @default(false)
+  mode              String   @default("paper")   // "paper" | "live"
+  minPhilosophyScore Int     @default(55)
+  minMarginOfSafety  Float   @default(30)
+  maxPositionPct     Float   @default(10)
+  schwabAccountId   String?
+  lastRunAt         DateTime?
+  lastRunResult     Json?
+  updatedAt         DateTime @updatedAt
+}
+
+model SchwabToken {
+  id           String   @id @default(cuid())
+  accountId    String   @unique
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  stockId   String?
+  ticker    String
+  type      String
+  message   String
+  severity  String   @default("info")
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model QuarterlyRebalance {
+  id         String   @id @default(cuid())
+  executedAt DateTime @default(now())
+  notes      String?
+  actions    Json
+}

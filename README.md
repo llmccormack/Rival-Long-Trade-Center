@@ -1,36 +1,138 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Graham Capital — Value Investing Platform
 
-## Getting Started
+Benjamin Graham & Warren Buffett value investing methodology, automated.
 
-First, run the development server:
+## Philosophy Encoded
+
+- **Margin of Safety** — only buy when price is 30%+ below intrinsic value
+- **Mr. Market** — treat price swings as opportunities, not signals
+- **Owner Earnings** — Buffett's formula: Net Income + D&A − CapEx
+- **Graham Number** — √(22.5 × EPS × Book Value Per Share)
+- **Long-term holding** — sell only when fundamentals deteriorate, never on price drops
+
+---
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.local.example .env.local
+```
+
+Edit `.env.local` with your:
+- `DATABASE_URL` — PostgreSQL connection string
+- `FMP_API_KEY` — [Financial Modeling Prep](https://financialmodelingprep.com/developer) (free tier works for analysis; Starter plan recommended for full screener)
+- `SCHWAB_CLIENT_ID` / `SCHWAB_CLIENT_SECRET` — [Schwab Developer Portal](https://developer.schwab.com)
+- `SCHWAB_REDIRECT_URI` — set to `http://localhost:3000/api/schwab/auth/callback`
+
+### 3. Set up database
+
+```bash
+# Run migrations (requires PostgreSQL running)
+npx prisma migrate dev --name init
+
+# Or push schema directly
+npx prisma db push
+```
+
+### 4. Run development server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Graham Screener (`/screener`)
+Runs all 7 Benjamin Graham Chapter 14 Defensive Investor criteria:
 
-## Learn More
+| Criterion | Threshold |
+|-----------|-----------|
+| P/E Ratio | ≤ 15 |
+| Price/Book | ≤ 1.5 |
+| Current Ratio | ≥ 2 |
+| LT Debt vs Net Current Assets | LTD ≤ NCA |
+| EPS Growth (10yr CAGR) | ≥ 3%/yr |
+| Dividend History | ≥ 20 consecutive years |
+| No Earnings Deficit | Last 10 years |
 
-To learn more about Next.js, take a look at the following resources:
+### Stock Analysis (`/analysis/[ticker]`)
+- Graham Number calculation
+- DCF using Owner Earnings (Buffett's method)
+- Composite intrinsic value (40% Graham Number, 60% DCF)
+- Margin of Safety gauge
+- 10-year EPS, Revenue, FCF, and Book Value charts — no price charts, ever
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Portfolio Management (`/portfolio`)
+- Position tracking with cost basis
+- Margin of Safety vs current price for every holding
+- Quarterly rebalance reviews fundamentals, never sells on price drops
+- Max 10% per position (equal weighting)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Watchlist (`/watchlist`)
+- Add tickers to watch
+- Auto-calculates target buy price (intrinsic value − 30%)
+- Alerts when a stock hits the buy threshold
 
-## Deploy on Vercel
+### Automated Trading (Schwab API)
+- OAuth 2.0 with auto token refresh every 30 minutes
+- Places market orders when a watchlist stock passes all 7 criteria + 30% MOS
+- `POST /api/schwab/orders` — trigger a buy
+- `POST /api/portfolio { "action": "rebalance" }` — run quarterly review
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 16 (App Router), TypeScript |
+| Styling | Tailwind CSS v4 |
+| Charts | Recharts (fundamentals only) |
+| Database | PostgreSQL via Prisma 7 |
+| Fundamental Data | Financial Modeling Prep API |
+| Brokerage | Schwab Developer API (OAuth 2.0) |
+
+---
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── page.tsx                    # Dashboard
+│   ├── screener/page.tsx           # Graham screener
+│   ├── analysis/[ticker]/page.tsx  # Deep dive analysis
+│   ├── portfolio/page.tsx          # Holdings
+│   ├── watchlist/page.tsx          # Watch + alerts
+│   └── api/
+│       ├── screener/
+│       ├── analysis/[ticker]/
+│       ├── fundamentals/[ticker]/
+│       ├── portfolio/
+│       ├── watchlist/
+│       ├── alerts/
+│       └── schwab/{auth,orders,portfolio}/
+├── lib/
+│   ├── graham/
+│   │   ├── screener.ts             # Chapter 14 criteria
+│   │   └── intrinsic-value.ts      # Graham Number + DCF
+│   ├── fmp/client.ts               # Financial Modeling Prep
+│   ├── schwab/{auth,client}.ts     # OAuth + trading API
+│   ├── portfolio/manager.ts        # Auto-buy + rebalancing
+│   └── db/client.ts                # Prisma singleton
+└── components/
+    ├── ui/                         # Badge, MetricCard, MOSGauge, FundamentalChart
+    ├── dashboard/                  # AlertsFeed
+    ├── screener/                   # ScreenerTable
+    └── portfolio/                  # PositionsTable
+```

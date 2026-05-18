@@ -1,0 +1,456 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useTradingMode } from '@/contexts/TradingMode'
+import { cn } from '@/lib/utils'
+
+const PHILOSOPHY_GATES = [
+  {
+    step: '01',
+    title: 'Hard Veto Check',
+    desc: 'Any single principle veto permanently blocks the trade regardless of score',
+    examples: ['Negative owner earnings', 'Current ratio < 1.0', 'Debt/equity > 2×', 'Management fraud flag'],
+    color: 'text-red-400',
+    border: 'border-red-900/50',
+    bg: 'bg-red-900/10',
+  },
+  {
+    step: '02',
+    title: 'Philosophy Score Gate',
+    desc: 'Weighted scoring across 137 principles across Graham, Buffett, and Fisher',
+    examples: ['Must score ≥ 55 / 100 to proceed', 'Category scores checked independently', 'Audit trail generated for every principle'],
+    color: 'text-violet-400',
+    border: 'border-violet-900/50',
+    bg: 'bg-violet-900/10',
+  },
+  {
+    step: '03',
+    title: 'Margin of Safety Gate',
+    desc: 'Graham Ch.20 — The central concept. No exceptions.',
+    examples: ['Must show ≥ 30% discount to intrinsic value', 'IV = 40% Graham Number + 60% DCF', 'Owner Earnings used as DCF input'],
+    color: 'text-emerald-400',
+    border: 'border-emerald-900/50',
+    bg: 'bg-emerald-900/10',
+  },
+  {
+    step: '04',
+    title: 'Conviction-Scaled Sizing',
+    desc: 'Position size scales with philosophy conviction level',
+    examples: ['Strong Buy → 100% of 10% cap', 'Buy → 70% of 10% cap', 'Watchlist → 50% of 10% cap'],
+    color: 'text-amber-400',
+    border: 'border-amber-900/50',
+    bg: 'bg-amber-900/10',
+  },
+]
+
+interface RunResult {
+  ranAt: string
+  mode: string
+  watchlistScanned: number
+  buys: number
+  skipped: number
+  vetoed: number
+  results: Array<{
+    ticker: string
+    action: string
+    score?: number
+    mos?: number
+    conviction?: string
+    reason?: string
+    shares?: number
+    price?: number
+  }>
+}
+
+interface PaperPosition {
+  ticker: string
+  name: string
+  shares: number
+  avgCostBasis: number
+  currentPrice: number
+  currentValue: number
+  gainLoss: number
+  gainLossPct: number
+  philosophyScore: number | null
+  conviction: string | null
+  mosAtPurchase: number | null
+}
+
+interface PaperPortfolio {
+  positions: PaperPosition[]
+  totalValue: number
+  totalCost: number
+  totalGainLoss: number
+  totalGainLossPct: number
+}
+
+const ACTION_STYLE: Record<string, string> = {
+  PAPER_BUY:   'bg-emerald-900/50 text-emerald-400 border-emerald-800',
+  QUEUED_LIVE: 'bg-blue-900/50 text-blue-400 border-blue-800',
+  VETOED:      'bg-red-900/50 text-red-400 border-red-800',
+  SKIP:        'bg-zinc-800/80 text-zinc-600 border-zinc-700',
+  ERROR:       'bg-red-900/30 text-red-500 border-red-900',
+}
+
+export default function AutopilotPage() {
+  const { mode, setMode, isPaper } = useTradingMode()
+  const [autopilotOn, setAutopilotOn] = useState(false)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [minScore, setMinScore] = useState(55)
+  const [minMOS, setMinMOS] = useState(30)
+  const [lastRun, setLastRun] = useState<RunResult | null>(null)
+  const [portfolio, setPortfolio] = useState<PaperPortfolio | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [running, setRunning] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/autopilot/run').then(r => r.json()).catch(() => null),
+      fetch('/api/paper-portfolio').then(r => r.json()).catch(() => null),
+      fetch('/api/autopilot/config').then(r => r.json()).catch(() => null),
+    ]).then(([runData, portfolioData, config]) => {
+      if (runData?.lastRunResult) setLastRun(runData.lastRunResult)
+      if (portfolioData?.positions) setPortfolio(portfolioData)
+      if (config && !config.error) {
+        setAutopilotOn(config.isEnabled)
+        setMinScore(config.minPhilosophyScore)
+        setMinMOS(config.minMarginOfSafety)
+      }
+      setLoading(false)
+    })
+  }, [])
+
+  const runNow = async () => {
+    setRunning(true)
+    try {
+      const res = await fetch('/api/autopilot/run', { method: 'POST' })
+      const result = await res.json()
+      if (!result.error) setLastRun(result)
+      const portfolioRes = await fetch('/api/paper-portfolio')
+      const portfolioData = await portfolioRes.json()
+      if (portfolioData?.positions) setPortfolio(portfolioData)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const decisions = lastRun?.results ?? []
+  const buys = decisions.filter(d => d.action.includes('BUY')).length
+  const blocked = decisions.filter(d => d.action === 'VETOED' || d.action === 'ERROR').length
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-zinc-100">Autopilot</h1>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Every trade routed through 137 Graham · Buffett · Fisher principles.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex rounded-lg bg-zinc-900 border border-zinc-800 p-0.5">
+            <button
+              onClick={() => setMode('paper')}
+              className={cn(
+                'rounded-md px-4 py-1.5 text-xs font-semibold tracking-wide transition-all',
+                mode === 'paper' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'text-zinc-600 hover:text-zinc-400'
+              )}
+            >
+              PAPER
+            </button>
+            <button
+              onClick={() => setMode('live')}
+              className={cn(
+                'rounded-md px-4 py-1.5 text-xs font-semibold tracking-wide transition-all',
+                mode === 'live' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'text-zinc-600 hover:text-zinc-400'
+              )}
+            >
+              LIVE
+            </button>
+          </div>
+
+          <button
+            onClick={() => setAutopilotOn(!autopilotOn)}
+            className={cn(
+              'flex items-center gap-2.5 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
+              autopilotOn
+                ? 'border-emerald-800/60 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/30'
+                : 'border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-zinc-300'
+            )}
+          >
+            {autopilotOn ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                Autopilot Active
+              </>
+            ) : (
+              <>
+                <span className="h-2 w-2 rounded-full bg-zinc-600" />
+                Autopilot Off
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={runNow}
+            disabled={running}
+            className="rounded-lg border border-violet-700/50 bg-violet-900/20 px-4 py-2 text-sm font-medium text-violet-400 hover:bg-violet-900/30 disabled:opacity-40 transition-colors"
+          >
+            {running ? 'Running…' : 'Run Now'}
+          </button>
+        </div>
+      </div>
+
+      {/* Paper mode notice */}
+      {isPaper && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-800/40 bg-amber-900/10 px-4 py-3">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0 text-amber-500">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <p className="text-sm text-amber-400/80">
+            <span className="font-semibold text-amber-400">Paper Trading Mode</span> — All decisions are simulated. No real orders will be placed. Switch to Live to connect your Schwab account.
+          </p>
+        </div>
+      )}
+
+      {/* Status cards */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: 'System Status', value: autopilotOn ? 'Active' : 'Paused', sub: isPaper ? 'Paper mode' : 'Live mode', good: autopilotOn },
+          { label: 'Decisions', value: decisions.length.toString(), sub: `${buys} buys · ${blocked} blocked`, good: null },
+          { label: 'Philosophy Gate', value: `≥ ${minScore}`, sub: 'out of 100 required', good: null },
+          { label: 'MOS Gate', value: `≥ ${minMOS}%`, sub: 'below intrinsic value', good: null },
+        ].map(({ label, value, sub, good }) => (
+          <div key={label} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">{label}</div>
+            <div className={cn('mt-1.5 text-2xl font-mono font-bold tabular-nums', good === true ? 'text-emerald-400' : good === false ? 'text-zinc-600' : 'text-zinc-100')}>
+              {value}
+            </div>
+            <div className="mt-0.5 text-xs text-zinc-600">{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Paper portfolio summary */}
+      {portfolio && portfolio.positions.length > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Paper Portfolio</h2>
+            <div className="flex gap-4 text-xs">
+              <span className="text-zinc-600">
+                Total Value <span className="font-mono text-zinc-300">${portfolio.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </span>
+              <span className={cn('font-mono', portfolio.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                {portfolio.totalGainLoss >= 0 ? '+' : ''}{portfolio.totalGainLossPct.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800">
+                  {['Ticker', 'Shares', 'Avg Cost', 'Price', 'Value', 'G/L', 'Score', 'MOS'].map(h => (
+                    <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/40">
+                {portfolio.positions.map(p => (
+                  <tr key={p.ticker} className="hover:bg-zinc-800/20 transition-colors">
+                    <td className="py-2.5 pr-4 font-mono font-bold text-zinc-100">{p.ticker}</td>
+                    <td className="py-2.5 pr-4 font-mono text-zinc-400">{p.shares}</td>
+                    <td className="py-2.5 pr-4 font-mono text-zinc-500">${p.avgCostBasis.toFixed(2)}</td>
+                    <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentPrice.toFixed(2)}</td>
+                    <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                    <td className={cn('py-2.5 pr-4 font-mono text-xs', p.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {p.gainLoss >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 55 ? 'text-violet-400' : 'text-zinc-600')}>
+                        {p.philosophyScore ?? '—'}
+                      </span>
+                    </td>
+                    <td className={cn('py-2.5 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 30 ? 'text-emerald-400' : 'text-amber-400')}>
+                      {p.mosAtPurchase != null ? `${p.mosAtPurchase.toFixed(1)}%` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Parameters + Gates side by side */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Risk Parameters</h2>
+          <div className="space-y-5">
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-sm text-zinc-400">Min Philosophy Score</label>
+                <span className="text-sm font-mono font-bold text-violet-400">{minScore}</span>
+              </div>
+              <input
+                type="range" min={40} max={80} value={minScore}
+                onChange={e => setMinScore(Number(e.target.value))}
+                className="w-full accent-violet-600"
+              />
+              <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                <span>Permissive (40)</span><span>Strict (80)</span>
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-sm text-zinc-400">Min Margin of Safety</label>
+                <span className="text-sm font-mono font-bold text-emerald-400">{minMOS}%</span>
+              </div>
+              <input
+                type="range" min={15} max={50} value={minMOS}
+                onChange={e => setMinMOS(Number(e.target.value))}
+                className="w-full accent-emerald-600"
+              />
+              <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                <span>Flexible (15%)</span><span>Conservative (50%)</span>
+              </div>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
+              {[
+                { label: 'Max Position Size', value: '10%', note: 'Graham/Dodd hard limit' },
+                { label: 'Principles Active', value: '137', note: 'Graham + Buffett + Fisher' },
+                { label: 'Hard Veto Count', value: '4', note: 'Any one blocks trade' },
+              ].map(({ label, value, note }) => (
+                <div key={label} className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-zinc-400">{label}</div>
+                    <div className="text-[10px] text-zinc-700">{note}</div>
+                  </div>
+                  <span className="font-mono text-sm font-bold text-zinc-300">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-2 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Philosophy Decision Gates</h2>
+          <div className="space-y-3">
+            {PHILOSOPHY_GATES.map((gate) => (
+              <div key={gate.step} className={cn('rounded-lg border p-4', gate.border, gate.bg)}>
+                <div className="flex items-start gap-3">
+                  <span className={cn('font-mono text-xs font-bold tabular-nums mt-0.5', gate.color)}>{gate.step}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className={cn('text-sm font-semibold', gate.color)}>{gate.title}</div>
+                    <div className="text-xs text-zinc-500 mt-0.5">{gate.desc}</div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {gate.examples.map(ex => (
+                        <span key={ex} className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5 text-[10px] text-zinc-500">{ex}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Decision log */}
+      {decisions.length > 0 ? (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Last Run Decisions</h2>
+            <span className="text-[11px] text-zinc-700">
+              {lastRun?.ranAt ? new Date(lastRun.ranAt).toLocaleString() : ''} · {isPaper ? 'Paper' : 'Live'} mode
+            </span>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-zinc-800">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900/80">
+                  {['Ticker', 'Action', 'Score', 'MOS', 'Reason', ''].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
+                {decisions.flatMap((d) => {
+                  const rows = [
+                    <tr
+                      key={d.ticker}
+                      className="hover:bg-zinc-800/40 cursor-pointer transition-colors"
+                      onClick={() => setExpanded(expanded === d.ticker ? null : d.ticker)}
+                    >
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-sm font-bold text-zinc-100">{d.ticker}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn('rounded border px-2 py-0.5 text-[11px] font-bold tracking-wide', ACTION_STYLE[d.action] ?? 'text-zinc-500')}>
+                          {d.action}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {d.score != null ? (
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-16 rounded-full bg-zinc-800 overflow-hidden">
+                              <div
+                                className={cn('h-full rounded-full', d.score >= 55 ? 'bg-violet-500' : 'bg-zinc-600')}
+                                style={{ width: `${d.score}%` }}
+                              />
+                            </div>
+                            <span className={cn('font-mono text-xs tabular-nums', d.score >= 55 ? 'text-violet-400' : 'text-zinc-600')}>{d.score}</span>
+                          </div>
+                        ) : <span className="text-zinc-700">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {d.mos != null ? (
+                          <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                            {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
+                          </span>
+                        ) : <span className="text-zinc-700">—</span>}
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <span className="text-xs text-zinc-500 line-clamp-1">{d.reason ?? `Score ${d.score} · MOS ${d.mos?.toFixed(1)}%`}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <svg viewBox="0 0 20 20" fill="currentColor" className={cn('h-3.5 w-3.5 ml-auto text-zinc-700 transition-transform', expanded === d.ticker ? 'rotate-180' : '')}>
+                          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      </td>
+                    </tr>,
+                  ]
+                  if (expanded === d.ticker) {
+                    rows.push(
+                      <tr key={`${d.ticker}-detail`} className="bg-zinc-900/80">
+                        <td colSpan={6} className="px-4 py-3 border-t border-zinc-800/50">
+                          <div className="font-mono text-xs text-zinc-400 leading-5">
+                            <span className="text-zinc-600">AUDIT TRAIL / {d.ticker}</span><br />
+                            {'>'} Action: {d.action}<br />
+                            {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction})` : ''}<br /></>}
+                            {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 30 ? '✓ PASS' : '✗ FAIL'}<br /></>}
+                            {d.shares != null && <>{`>`} Shares: {d.shares} @ ${d.price?.toFixed(2)}<br /></>}
+                            {d.reason && <>{`>`} {d.reason}<br /></>}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  }
+                  return rows
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : !loading && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-6 py-10 text-center">
+          <p className="text-sm text-zinc-600">No decisions yet. Add tickers to your watchlist and click Run Now.</p>
+        </div>
+      )}
+    </div>
+  )
+}
