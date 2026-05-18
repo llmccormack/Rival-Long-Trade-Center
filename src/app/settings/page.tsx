@@ -27,6 +27,23 @@ const StatusDot = ({ ok }: { ok: boolean }) => (
   <span className={cn('inline-flex h-2 w-2 rounded-full', ok ? 'bg-emerald-500' : 'bg-red-500')} />
 )
 
+function NotifyTestButton() {
+  const [status, setStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
+  const test = async () => {
+    setStatus('sending')
+    const res = await fetch('/api/notifications/test', { method: 'POST' })
+    const data = await res.json()
+    setStatus(data.ok ? 'ok' : 'error')
+    setTimeout(() => setStatus('idle'), 3000)
+  }
+  return (
+    <button onClick={test} disabled={status === 'sending'}
+      className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-400 hover:border-zinc-500 disabled:opacity-40 transition-colors">
+      {status === 'sending' ? 'Sending…' : status === 'ok' ? '✓ Test email sent' : status === 'error' ? '✗ Failed' : 'Send test email'}
+    </button>
+  )
+}
+
 function SchwabBanner() {
   const searchParams = useSearchParams()
   const schwabStatus = searchParams.get('schwab')
@@ -329,6 +346,44 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* Notifications */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <h2 className="mb-1 text-xs font-medium uppercase tracking-widest text-zinc-500">Notifications</h2>
+        <p className="mb-4 text-xs text-zinc-600">Get push + email alerts on every trade, sell signal, and full-run summary.</p>
+
+        <div className="space-y-4">
+          {/* ntfy push */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-semibold text-zinc-300">Push Notifications (ntfy)</span>
+              <span className="rounded border border-emerald-800/50 bg-emerald-900/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-500">FREE</span>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4 text-xs text-zinc-500 space-y-2">
+              <p>Since you already have ntfy, just add your topic to Railway:</p>
+              <code className="block text-zinc-300 bg-zinc-900 rounded px-2 py-1">NTFY_TOPIC=your-secret-topic-name</code>
+              <p className="text-zinc-600">Optional — for private topics with auth:</p>
+              <code className="block text-zinc-400">NTFY_TOKEN=your-ntfy-token</code>
+              <code className="block text-zinc-400">NTFY_SERVER=https://ntfy.sh  <span className="text-zinc-700"># or self-hosted</span></code>
+            </div>
+          </div>
+
+          {/* Email via Resend */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-semibold text-zinc-300">Email (Resend)</span>
+              <span className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">OPTIONAL</span>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4 text-xs text-zinc-500 space-y-2">
+              <code className="block text-zinc-400">RESEND_API_KEY=re_xxxxxxxxxxxx</code>
+              <code className="block text-zinc-400">NOTIFY_EMAIL=you@example.com</code>
+              <p className="text-zinc-600">Free at <a href="https://resend.com" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">resend.com</a> — 3,000 emails/month</p>
+            </div>
+          </div>
+
+          <NotifyTestButton />
+        </div>
+      </div>
 
       {/* Railway cron instructions */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-5">

@@ -7,7 +7,7 @@ import { MOSGauge } from '@/components/ui/MOSGauge'
 import { FundamentalChart } from '@/components/ui/FundamentalChart'
 import { formatCurrency, formatNumber, formatPct, cn } from '@/lib/utils'
 import { getCompleteFundamentals, getTickerNews, getInsiderTransactions, getEarningsCalendar, getHistoricalValuationBands, getStockPeers } from '@/lib/fmp/client'
-import { ThesisPanel } from '@/components/ui/ThesisPanel'
+import { DeepDivePanel } from '@/components/ui/DeepDivePanel'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
@@ -73,7 +73,7 @@ export default async function AnalysisPage({
         </div>
       </div>
 
-      <ThesisPanel ticker={ticker.toUpperCase()} />
+      <DeepDivePanel ticker={ticker.toUpperCase()} />
 
       {/* MOS + Key Valuation */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useTradingMode } from '@/contexts/TradingMode'
 import { cn } from '@/lib/utils'
+import { PortfolioReviewPanel } from '@/components/ui/PortfolioReviewPanel'
 
 const PHILOSOPHY_GATES = [
   {
@@ -565,6 +566,8 @@ export default function AutopilotPage() {
           <p className="text-sm text-zinc-600">No decisions yet. Add tickers to your watchlist and click Run Now.</p>
         </div>
       )}
+
+      <PortfolioReviewPanel />
     </div>
   )
 }

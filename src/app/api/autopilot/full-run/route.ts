@@ -6,6 +6,8 @@ import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
+import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
+import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
 
 // POST /api/autopilot/full-run
 // Full pipeline: scan market → auto-populate watchlist → execute trades
@@ -199,6 +201,10 @@ export async function POST(request: NextRequest) {
           mos: iv.marginOfSafety,
           conviction: philosophy.conviction,
         })
+        await Promise.all([
+          sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: sharesToBuy, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+          pushTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: sharesToBuy, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+        ])
       } else {
         tradeResults.push({
           ticker: item.stock.ticker,
@@ -246,6 +252,14 @@ export async function POST(request: NextRequest) {
           },
         })
         sellResults.push({ ticker: pos.stock.ticker, action: 'PAPER_SELL', reason: sellSignal.reason, urgency: sellSignal.urgency, price: f.price })
+        await Promise.all([
+          sendTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
+          pushTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
+          ...(sellSignal.vetoSell ? [
+            sendVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
+            pushVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
+          ] : []),
+        ])
       }
       await new Promise(r => setTimeout(r, 200))
     } catch { /* skip */ }
@@ -266,6 +280,11 @@ export async function POST(request: NextRequest) {
     results: tradeResults,
     sells: sellResults.length, sellResults,
   }
+
+  await Promise.all([
+    sendRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, skipped: summary.skipped, newWatchlist: summary.newlyPromoted, results: summary.results, mode: summary.mode }).catch(() => {}),
+    pushRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, newWatchlist: summary.newlyPromoted, mode: summary.mode }).catch(() => {}),
+  ])
 
   await prisma.autopilotConfig.update({
     where: { id: 'singleton' },
