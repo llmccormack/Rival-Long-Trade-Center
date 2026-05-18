@@ -5,6 +5,7 @@ import { getCompleteFundamentals, getTickerNews, getEarningsCalendar } from '@/l
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
@@ -142,8 +143,6 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      const sharesToBuy = Math.max(1, Math.floor(10000 / fundamentals.price))
-
       if (config.mode === 'paper') {
         const stock = await prisma.stock.upsert({
           where: { ticker: item.stock.ticker },
@@ -160,10 +159,37 @@ export async function POST(request: NextRequest) {
         const existing = await prisma.paperPortfolioItem.findFirst({
           where: { stockId: stock.id, isOpen: true },
         })
+        const openCount = await prisma.paperPortfolioItem.count({ where: { isOpen: true } })
+        const existingValue = existing
+          ? existing.shares * (existing.currentPrice ?? existing.avgCostBasis)
+          : 0
+
+        const allocation = allocateCapital({
+          totalCapital: config.totalCapital ?? 10000,
+          conviction: philosophy.conviction,
+          marginOfSafety: iv.marginOfSafety,
+          philosophyScore: philosophy.total,
+          price: fundamentals.price,
+          maxPositionPct: config.maxPositionPct ?? 10,
+          openPositionCount: openCount,
+          maxPositions: config.maxPositions ?? 15,
+          existingPositionValue: existingValue,
+        })
+
+        if (!allocation.canAllocate) {
+          tradeResults.push({
+            ticker: item.stock.ticker,
+            action: 'SKIP',
+            score: philosophy.total,
+            mos: iv.marginOfSafety,
+            reason: allocation.reason,
+          })
+          continue
+        }
 
         if (existing) {
-          const newShares = existing.shares + sharesToBuy
-          const newAvg = (existing.shares * existing.avgCostBasis + sharesToBuy * fundamentals.price) / newShares
+          const newShares = existing.shares + allocation.shares
+          const newAvg = (existing.shares * existing.avgCostBasis + allocation.shares * fundamentals.price) / newShares
           await prisma.paperPortfolioItem.update({
             where: { id: existing.id },
             data: { shares: newShares, avgCostBasis: newAvg, currentPrice: fundamentals.price },
@@ -172,13 +198,13 @@ export async function POST(request: NextRequest) {
           await prisma.paperPortfolioItem.create({
             data: {
               stockId: stock.id,
-              shares: sharesToBuy,
+              shares: allocation.shares,
               avgCostBasis: fundamentals.price,
               currentPrice: fundamentals.price,
               philosophyScore: philosophy.total,
               conviction: philosophy.conviction,
               mosAtPurchase: iv.marginOfSafety,
-              auditTrail: philosophy.auditTrail.slice(0, 10),
+              auditTrail: [allocation.rationale, ...philosophy.auditTrail.slice(0, 9)],
             },
           })
         }
@@ -187,7 +213,7 @@ export async function POST(request: NextRequest) {
           data: {
             ticker: item.stock.ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${sharesToBuy} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}%`,
+            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}%`,
             severity: 'buy',
           },
         })
@@ -195,15 +221,18 @@ export async function POST(request: NextRequest) {
         tradeResults.push({
           ticker: item.stock.ticker,
           action: 'PAPER_BUY',
-          shares: sharesToBuy,
+          shares: allocation.shares,
           price: fundamentals.price,
+          dollarAmount: allocation.dollarAmount,
+          positionPct: allocation.positionPct,
           score: philosophy.total,
           mos: iv.marginOfSafety,
           conviction: philosophy.conviction,
+          rationale: allocation.rationale,
         })
         await Promise.all([
-          sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: sharesToBuy, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
-          pushTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: sharesToBuy, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+          sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+          pushTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
         ])
       } else {
         tradeResults.push({

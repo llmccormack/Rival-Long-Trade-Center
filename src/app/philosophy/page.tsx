@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import {
   ALL_PRINCIPLES,
+  SELL_PRINCIPLES,
   SOURCE_LABELS,
   CATEGORY_LABELS,
   type Source,
@@ -55,6 +56,8 @@ const CATEGORY_COLORS: Record<Category, string> = {
   temperament: 'bg-purple-900/40 text-purple-400',
 }
 
+const ALL = [...ALL_PRINCIPLES, ...SELL_PRINCIPLES]
+
 export default function PhilosophyPage() {
   const [activeSource, setActiveSource] = useState<Source | 'all'>('all')
   const [activeCategory, setActiveCategory] = useState<Category | 'all'>('all')
@@ -62,7 +65,7 @@ export default function PhilosophyPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
-    return ALL_PRINCIPLES.filter((p) => {
+    return ALL.filter((p) => {
       if (activeSource !== 'all' && p.source !== activeSource) return false
       if (activeCategory !== 'all' && p.category !== activeCategory) return false
       if (search.trim()) {
@@ -79,7 +82,7 @@ export default function PhilosophyPage() {
 
   const bySource = SOURCES.map((s) => ({
     source: s,
-    count: ALL_PRINCIPLES.filter((p) => p.source === s).length,
+    count: ALL.filter((p) => p.source === s).length,
   }))
 
   return (
@@ -87,8 +90,48 @@ export default function PhilosophyPage() {
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Philosophy Engine</h1>
         <p className="mt-0.5 text-sm text-zinc-500">
-          {ALL_PRINCIPLES.length} active principles from 14 sources — the brain behind every trade.
+          {ALL.length} active principles from 14 sources — the brain behind every trade.
         </p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { label: 'Total Principles', value: ALL.length, color: 'text-violet-400' },
+          { label: 'Hard Vetoes (weight 9–10)', value: ALL.filter(p => p.weight >= 9).length, color: 'text-red-400' },
+          { label: 'Buy Signals', value: ALL.filter(p => p.appliesTo.includes('buy')).length, color: 'text-emerald-400' },
+          { label: 'Sell Triggers', value: ALL.filter(p => p.appliesTo.includes('sell')).length, color: 'text-amber-400' },
+        ].map(s => (
+          <div key={s.label} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div className={cn('text-2xl font-bold tabular-nums', s.color)}>{s.value}</div>
+            <div className="mt-0.5 text-xs text-zinc-500">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Capital allocation explainer */}
+      <div className="rounded-xl border border-amber-900/30 bg-amber-950/15 p-5">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-widest text-amber-500">How Capital Is Allocated by Conviction</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 text-sm">
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-zinc-300">Conviction Gate</div>
+            <p className="text-xs text-zinc-500 leading-relaxed">Only <span className="text-emerald-400 font-semibold">Strong Buy</span> (score ≥75, MOS ≥30%, Graham pass) and <span className="text-emerald-400 font-semibold">Buy</span> (score ≥60, MOS ≥30%) trigger capital deployment. All other signals wait.</p>
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-zinc-300">Sizing Formula</div>
+            <div className="text-xs text-zinc-500 space-y-0.5">
+              <div className="flex justify-between"><span>Strong Buy base</span><span className="font-mono text-zinc-300">12% of capital</span></div>
+              <div className="flex justify-between"><span>Buy base</span><span className="font-mono text-zinc-300">7% of capital</span></div>
+              <div className="flex justify-between"><span>MOS ≥50% boost</span><span className="font-mono text-emerald-400">+30%</span></div>
+              <div className="flex justify-between"><span>Score ≥80 boost</span><span className="font-mono text-emerald-400">+15%</span></div>
+              <div className="flex justify-between"><span>Portfolio crowding</span><span className="font-mono text-red-400">−15–30%</span></div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold text-zinc-300">Hard Caps</div>
+            <p className="text-xs text-zinc-500 leading-relaxed">No single position exceeds <span className="text-red-400">maxPositionPct</span> of total capital. Portfolio capped at <span className="text-red-400">maxPositions</span> open slots — Buffett's punch-card principle. Configure both in Settings.</p>
+          </div>
+        </div>
       </div>
 
       {/* Source totals */}
@@ -129,7 +172,7 @@ export default function PhilosophyPage() {
           Clear filters
         </button>
         <span className="ml-auto self-center text-xs text-zinc-600">
-          {filtered.length} of {ALL_PRINCIPLES.length} principles
+          {filtered.length} of {ALL.length} principles
         </span>
       </div>
 

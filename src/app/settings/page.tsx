@@ -11,6 +11,8 @@ interface Config {
   minPhilosophyScore: number
   minMarginOfSafety: number
   maxPositionPct: number
+  totalCapital: number
+  maxPositions: number
   schwabAccountId: string | null
   lastRunAt: string | null
 }
@@ -98,6 +100,8 @@ export default function SettingsPage() {
           minPhilosophyScore: config.minPhilosophyScore,
           minMarginOfSafety: config.minMarginOfSafety,
           maxPositionPct: config.maxPositionPct,
+          totalCapital: config.totalCapital,
+          maxPositions: config.maxPositions,
         }),
       })
       const updated = await res.json()
@@ -263,6 +267,62 @@ export default function SettingsPage() {
                 ⚠ Live mode places real orders through your Schwab account. Ensure your account is connected above before enabling.
               </div>
             )}
+
+            {/* Capital Pool */}
+            <div className="rounded-lg border border-violet-900/30 bg-violet-950/20 p-4 space-y-4">
+              <div className="text-xs font-semibold uppercase tracking-widest text-violet-400">Capital Allocation</div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1.5 block">Total Capital</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
+                    <input
+                      type="number"
+                      min={100}
+                      step={100}
+                      value={config.totalCapital ?? 10000}
+                      onChange={e => setConfig({ ...config, totalCapital: Number(e.target.value) })}
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-900 pl-7 pr-3 py-2 text-sm text-zinc-200 font-mono focus:border-violet-600 focus:outline-none"
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] text-zinc-600">Paper trading capital pool. Positions are sized as a % of this amount.</p>
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs text-zinc-400">Max Positions</label>
+                    <span className="text-xs font-mono font-bold text-violet-400">{config.maxPositions ?? 15}</span>
+                  </div>
+                  <input
+                    type="range" min={5} max={30} step={1}
+                    value={config.maxPositions ?? 15}
+                    onChange={e => setConfig({ ...config, maxPositions: Number(e.target.value) })}
+                    className="w-full accent-violet-600"
+                  />
+                  <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                    <span>Concentrated (5)</span>
+                    <span>Diversified (30)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-zinc-900/60 p-3 text-[11px] text-zinc-500 space-y-1">
+                <div className="flex justify-between">
+                  <span>Strong Buy allocation</span>
+                  <span className="font-mono text-violet-400">~12% · ${((config.totalCapital ?? 10000) * 0.12).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Buy allocation</span>
+                  <span className="font-mono text-zinc-300">~7% · ${((config.totalCapital ?? 10000) * 0.07).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Max per position</span>
+                  <span className="font-mono text-zinc-300">{config.maxPositionPct ?? 10}% · ${((config.totalCapital ?? 10000) * (config.maxPositionPct ?? 10) / 100).toLocaleString()}</span>
+                </div>
+                <p className="text-zinc-700 pt-1 border-t border-zinc-800">MOS and score multipliers adjust each position ±30% from base. Buffett: size your best ideas bigger.</p>
+              </div>
+            </div>
 
             {/* Sliders */}
             {[
