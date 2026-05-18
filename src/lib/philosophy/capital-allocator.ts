@@ -22,6 +22,9 @@ export interface AllocationInput {
   openPositionCount: number      // currently open positions
   maxPositions: number           // cap from config (e.g. 15)
   existingPositionValue?: number // current $ value of existing position in this stock
+  deployedCapital?: number       // total capital currently deployed across all positions
+  minCashReservePct?: number     // minimum cash reserve as % of totalCapital (default 15)
+  avgCostBasis?: number          // existing position avg cost — enables averaging-down boost
 }
 
 export interface AllocationResult {
@@ -51,6 +54,9 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     openPositionCount,
     maxPositions,
     existingPositionValue = 0,
+    deployedCapital,
+    minCashReservePct = 15,
+    avgCostBasis,
   } = input
 
   const base = BASE[conviction] ?? 0
@@ -64,6 +70,29 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     return noAlloc(
       `Portfolio at capacity (${openPositionCount}/${maxPositions} positions). ` +
       `Buffett: "The punch card has a limit." Close a weaker position to free a slot.`
+    )
+  }
+
+  // Fix #10: Cash reserve floor — always keep minCashReservePct% in reserve
+  // Buffett keeps Berkshire's cash above $30B at all times; reserves are permanent dry powder
+  if (deployedCapital !== undefined) {
+    const maxDeployable = totalCapital * (1 - minCashReservePct / 100)
+    if (deployedCapital >= maxDeployable) {
+      return noAlloc(
+        `Cash reserve floor reached — deployed $${deployedCapital.toFixed(0)} of $${maxDeployable.toFixed(0)} max ` +
+        `(${minCashReservePct}% reserve required). Free capital before adding positions. Buffett: dry powder is a strategic asset.`
+      )
+    }
+  }
+
+  // Fix #12: Near-full portfolio raises the minimum score threshold
+  // Munger: "As the punch card fills, the bar for the next punch should rise"
+  const crowdRatio = openPositionCount / maxPositions
+  const dynamicMinScore = crowdRatio >= 0.9 ? 70 : crowdRatio >= 0.7 ? 62 : 55
+  if (philosophyScore < dynamicMinScore) {
+    return noAlloc(
+      `Portfolio ${Math.round(crowdRatio * 100)}% full — minimum score is now ${dynamicMinScore}/100 ` +
+      `(this stock: ${philosophyScore}/100). Munger: raise the bar as the punch card fills.`
     )
   }
 
@@ -87,6 +116,15 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     openPositionCount >= maxPositions * 0.9 ? 0.70 :
     openPositionCount >= maxPositions * 0.7 ? 0.85 : 1.00
 
+  // Fix #11: Averaging-down boost — if price has dropped from our cost basis, it's a better entry
+  // Buffett: "Buy more of your best ideas when Mr. Market hands them to you cheaper"
+  let avgDownMult = 1.0
+  let avgDownDiscount = 0
+  if (avgCostBasis && avgCostBasis > 0 && price < avgCostBasis) {
+    avgDownDiscount = (avgCostBasis - price) / avgCostBasis
+    avgDownMult = avgDownDiscount >= 0.10 ? 1.25 : avgDownDiscount >= 0.05 ? 1.15 : 1.0
+  }
+
   // ── Position cap check ────────────────────────────────────────────────────
 
   const existingPct = totalCapital > 0 ? existingPositionValue / totalCapital : 0
@@ -101,7 +139,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
 
   // ── Calculate final allocation ────────────────────────────────────────────
 
-  const rawPct = base * mosMult * scoreMult * crowdMult
+  const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult
   const finalPct = Math.min(rawPct, allowedPct, maxPositionPct / 100)
   const dollarTarget = totalCapital * finalPct
   const shares = Math.max(1, Math.floor(dollarTarget / price))
@@ -109,7 +147,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
   const actualPct = totalCapital > 0 ? (actualDollars / totalCapital) * 100 : 0
 
   const rationale = buildRationale({
-    conviction, base, mosMult, scoreMult, crowdMult,
+    conviction, base, mosMult, scoreMult, crowdMult, avgDownMult, avgDownDiscount,
     finalPct, actualDollars, marginOfSafety, philosophyScore,
     openPositionCount, maxPositions,
   })
@@ -133,6 +171,8 @@ function buildRationale(p: {
   mosMult: number
   scoreMult: number
   crowdMult: number
+  avgDownMult: number
+  avgDownDiscount: number
   finalPct: number
   actualDollars: number
   marginOfSafety: number
@@ -161,6 +201,10 @@ function buildRationale(p: {
 
   if (p.crowdMult < 1.0) {
     parts.push(`Portfolio crowding (${p.openPositionCount}/${p.maxPositions}) → −${((1 - p.crowdMult) * 100).toFixed(0)}%. Munger: raise the bar as the book fills.`)
+  }
+
+  if (p.avgDownMult > 1.0) {
+    parts.push(`Averaging down: price ${(p.avgDownDiscount * 100).toFixed(1)}% below cost basis → +${((p.avgDownMult - 1) * 100).toFixed(0)}% boost. Buffett: buy more when Mr. Market is more fearful.`)
   }
 
   parts.push(`Final: ${(p.finalPct * 100).toFixed(1)}% = $${p.actualDollars.toFixed(0)}.`)

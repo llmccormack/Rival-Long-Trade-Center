@@ -171,6 +171,8 @@ model AutopilotConfig {
   maxPositionPct     Float   @default(10)
   totalCapital       Float   @default(10000)
   maxPositions       Int     @default(15)
+  discountRate       Float   @default(10)    // DCF discount rate in % (e.g. 10 = 10%)
+  minCashReservePct  Float   @default(15)    // minimum % of totalCapital to keep in cash
   schwabAccountId   String?
   lastRunAt         DateTime?
   lastRunResult     Json?

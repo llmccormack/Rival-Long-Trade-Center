@@ -44,9 +44,14 @@ export interface StockFundamentals {
   // Cash Flow
   operatingCashFlow?: number
   capitalExpenditures?: number
+  maintenanceCapEx?: number          // min(CapEx, D&A) — Buffett owner earnings proxy
   freeCashFlow?: number
   depreciation?: number
   ownerEarnings?: number
+
+  // Cyclicality
+  normalizedEps?: number             // average EPS over cycle (used when isCyclical)
+  isCyclical?: boolean               // coeff of variation of EPS > 0.4
 
   // Dividends
   dividendPerShare?: number
@@ -70,10 +75,11 @@ export interface YearlyValue {
 export interface GrahamCriteria {
   passedPE: boolean
   passedPB: boolean
+  passedGrahamProduct: boolean       // pe × pb ≤ 22.5 (Graham Ch.14 — the actual rule)
   passedCurrentRatio: boolean
   passedDebtToAssets: boolean
   passedEpsGrowth: boolean
-  passedDividends: boolean
+  passedDividends: boolean           // soft signal only — not required for overallPass
   passedNoDeficit: boolean
   overallPass: boolean
 
@@ -83,6 +89,7 @@ export interface GrahamCriteria {
   debtToAssetsValue?: number
   epsGrowthValue?: number
   dividendYears?: number
+  normalizedEpsGrowth?: number       // regression-based, used when isCyclical
 }
 
 export interface IntrinsicValueResult {

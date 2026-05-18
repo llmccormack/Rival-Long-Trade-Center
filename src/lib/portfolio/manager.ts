@@ -6,7 +6,8 @@ import { getAccount, placeOrder } from '@/lib/schwab/client'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { getCompleteFundamentals } from '@/lib/fmp/client'
-import { scoreBuyDecision, scoreSellDecision } from '@/lib/philosophy/scorer'
+import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 import type { PortfolioSummary, PortfolioPosition } from '@/types'
 
 const MAX_POSITION_PCT = 0.10  // Graham/Dodd: never >10% in one name
@@ -233,13 +234,13 @@ export async function runQuarterlyRebalance(accountId: string): Promise<{
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
 
       // Philosophy sell assessment — never based on price
-      const sellAssessment = scoreSellDecision(fundamentals, criteria, iv, holding.avgCostBasis)
+      const sellAssessment = scoreSellDecision(fundamentals, iv, undefined, holding.avgCostBasis)
 
       actions.push({
         ticker: holding.stock.ticker,
-        action: sellAssessment.signal,
-        reason: sellAssessment.reasons.join('; ') || 'All fundamental indicators sound — hold.',
-        auditTrail: sellAssessment.auditTrail,
+        action: sellAssessment.urgency,
+        reason: sellAssessment.reason,
+        auditTrail: sellAssessment.signals,
       })
 
       if (sellAssessment.shouldSell) {
@@ -247,7 +248,7 @@ export async function runQuarterlyRebalance(accountId: string): Promise<{
           data: {
             ticker: holding.stock.ticker,
             type: 'fundamental_change',
-            message: `REBALANCE REVIEW: ${holding.stock.ticker} flagged for potential sale — ${sellAssessment.reasons[0]}`,
+            message: `REBALANCE REVIEW: ${holding.stock.ticker} flagged for potential sale — ${sellAssessment.reason}`,
             severity: 'warning',
           },
         })

@@ -3,7 +3,8 @@ import { prisma } from '@/lib/db/client'
 import { getCompleteFundamentals, getTickerNews } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
-import { scoreBuyDecision, scoreSellDecision } from '@/lib/philosophy/scorer'
+import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 
 // POST /api/autopilot/rebalance
 // Reviews all open positions for sell signals, then runs buy scan on watchlist.
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      const sell = scoreSellDecision(fundamentals, criteria, iv, pos.avgCostBasis)
+      const sell = scoreSellDecision(fundamentals, iv, news, pos.mosAtPurchase ?? undefined)
 
       if (sell.shouldSell) {
         await prisma.paperPortfolioItem.update({
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
             isOpen: false,
             closedAt: new Date(),
             closePrice: fundamentals.price,
-            closeReason: sell.reasons.join('; '),
+            closeReason: sell.signals.join('; '),
             currentPrice: fundamentals.price,
           },
         })
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
           data: {
             ticker: pos.stock.ticker,
             type: 'fundamental_change',
-            message: `PAPER SELL: ${pos.stock.ticker} @ $${fundamentals.price.toFixed(2)} — ${sell.reasons[0]}`,
+            message: `PAPER SELL: ${pos.stock.ticker} @ $${fundamentals.price.toFixed(2)} — ${sell.reason}`,
             severity: 'warning',
           },
         })
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
           ticker: pos.stock.ticker,
           action: 'SOLD',
           closePrice: fundamentals.price,
-          reasons: sell.reasons,
+          signals: sell.signals,
         })
       } else {
         // Refresh current price
@@ -109,11 +110,11 @@ export async function POST(request: NextRequest) {
         const buyScore = scoreBuyDecision(fundamentals, criteria, iv, news)
         holdActions.push({
           ticker: pos.stock.ticker,
-          action: sell.signal,
+          action: sell.urgency,
           currentPrice: fundamentals.price,
           mos: iv.marginOfSafety,
           philosophyScore: buyScore.total,
-          notes: sell.reasons,
+          notes: sell.signals,
         })
       }
     } catch (err: any) {

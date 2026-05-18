@@ -1,33 +1,91 @@
 import type { StockFundamentals, IntrinsicValueResult } from '@/types'
 
 // Graham Number = sqrt(22.5 × EPS × Book Value Per Share)
-// The 22.5 factor = 15 (max P/E) × 1.5 (max P/B) — Graham's formula from The Intelligent Investor
+// 22.5 = 15 (max P/E) × 1.5 (max P/B) — Graham, The Intelligent Investor
 export function calculateGrahamNumber(eps: number, bookValuePerShare: number): number | undefined {
   if (eps <= 0 || bookValuePerShare <= 0) return undefined
   return Math.sqrt(22.5 * eps * bookValuePerShare)
 }
 
-// Estimate sustainable EPS growth from 10-year history
+// ─── Growth Rate Estimation ────────────────────────────────────────────────────
+//
+// FIX #3: Old code used simple CAGR from the first positive year to last positive
+// year. This cherry-picks the start point — if a company lost money in 2013-2015
+// then recovered to $0.10 EPS in 2016 and grew to $1.50 today, CAGR shows 40%.
+//
+// New approach: log-linear regression across all positive-EPS years (handles gaps
+// without cherry-picking) + mean-reversion blend toward long-run 7% equity mean.
+
 function estimateGrowthRate(epsHistory: { year: number; value: number }[]): number {
-  const positive = epsHistory.filter((v) => v.value > 0)
-  if (positive.length < 2) return 0.03 // conservative fallback
+  const data = [...epsHistory]
+    .filter(v => v.value > 0)
+    .sort((a, b) => a.year - b.year)
+    .slice(-10)  // at most last 10 years
 
-  const sorted = [...positive].sort((a, b) => a.year - b.year)
-  const first = sorted[0].value
-  const last = sorted[sorted.length - 1].value
-  const years = sorted[sorted.length - 1].year - sorted[0].year
+  if (data.length < 2) return 0.03
 
-  if (years === 0) return 0.03
+  if (data.length === 2) {
+    // Only two data points — simple CAGR but capped conservatively
+    const years = data[1].year - data[0].year
+    if (years <= 0) return 0.03
+    const cagr = Math.pow(data[1].value / data[0].value, 1 / years) - 1
+    return Math.min(Math.max(cagr * 0.6 + 0.07 * 0.4, 0), 0.12)
+  }
 
-  // CAGR
-  const cagr = Math.pow(last / first, 1 / years) - 1
+  // Log-linear regression: ln(EPS) = a + b * year
+  // slope b is the continuously-compounded annual growth rate
+  const n = data.length
+  const xMean = data.reduce((s, d) => s + d.year, 0) / n
+  const yMean = data.reduce((s, d) => s + Math.log(d.value), 0) / n
+  const num = data.reduce((s, d) => s + (d.year - xMean) * (Math.log(d.value) - yMean), 0)
+  const den = data.reduce((s, d) => s + Math.pow(d.year - xMean, 2), 0)
 
-  // Cap growth rate conservatively — Graham/Buffett never assume heroic growth
-  return Math.min(Math.max(cagr, 0), 0.12)
+  if (den === 0) return 0.03
+
+  const continuousRate = num / den
+  const historicalGrowth = Math.exp(continuousRate) - 1  // discrete annual
+
+  // Mean-revert toward long-run equity earnings growth (7%)
+  // Weight: 60% historical regression, 40% long-run mean
+  // This prevents projecting a cyclical recovery spike or a one-decade boom forward
+  const LONG_RUN_MEAN = 0.07
+  const blended = historicalGrowth * 0.6 + LONG_RUN_MEAN * 0.4
+
+  return Math.min(Math.max(blended, 0), 0.12)
 }
 
-// Buffett's DCF using Owner Earnings
-// Discount rate default = 9% (long-run equity return); terminal growth = 3%
+// ─── Cyclicality Detection ─────────────────────────────────────────────────────
+//
+// FIX #9: Energy, mining, steel, and auto companies look cheap (P/E 5) at peak
+// cycle earnings — classic value trap. Use normalized (cycle-average) earnings
+// when earnings volatility is high.
+
+export function detectCyclicality(epsHistory: { year: number; value: number }[]): boolean {
+  const values = epsHistory.filter(h => h.value > 0).map(h => h.value)
+  if (values.length < 5) return false
+  const mean = values.reduce((s, v) => s + v, 0) / values.length
+  if (mean <= 0) return false
+  const variance = values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / values.length
+  const coeffOfVariation = Math.sqrt(variance) / mean
+  return coeffOfVariation > 0.4  // >40% variation = cyclical
+}
+
+export function normalizeEps(epsHistory: { year: number; value: number }[]): number | undefined {
+  const recentPositive = [...epsHistory]
+    .sort((a, b) => b.year - a.year)
+    .slice(0, 7)
+    .filter(v => v.value > 0)
+  if (recentPositive.length < 3) return undefined
+  return recentPositive.reduce((s, v) => s + v.value, 0) / recentPositive.length
+}
+
+// ─── Buffett DCF (Owner Earnings) ─────────────────────────────────────────────
+//
+// FIX #15: Discount rate is now a parameter (default 0.10).
+// At ~4.5% risk-free, equity risk premium ~5% → ~9.5-10% for high-quality stocks.
+// The old hard-coded 0.09 was appropriate at near-zero rates; 0.10 is more
+// realistic today and is configurable from autopilot settings.
+
 export function calculateDCF(params: {
   ownerEarnings: number
   growthRate?: number
@@ -43,12 +101,18 @@ export function calculateDCF(params: {
   const {
     ownerEarnings,
     growthRate,
-    discountRate = 0.09,
+    discountRate = 0.10,   // Updated default — see note above
     terminalGrowth = 0.03,
     years = 10,
   } = params
 
   const g = growthRate ?? 0.05
+
+  if (discountRate <= terminalGrowth) {
+    // Degenerate case — Gordon Growth Model blows up
+    return { dcfValue: 0, growthRateUsed: g, discountRateUsed: discountRate, terminalGrowth }
+  }
+
   let pv = 0
   let earnings = ownerEarnings
 
@@ -57,7 +121,7 @@ export function calculateDCF(params: {
     pv += earnings / Math.pow(1 + discountRate, t)
   }
 
-  // Terminal value (Gordon Growth Model)
+  // Terminal value: perpetuity growing at terminalGrowth starting year 11
   const terminalValue = (earnings * (1 + terminalGrowth)) / (discountRate - terminalGrowth)
   const pvTerminal = terminalValue / Math.pow(1 + discountRate, years)
 
@@ -69,17 +133,36 @@ export function calculateDCF(params: {
   }
 }
 
-// Composite intrinsic value: weighted average of Graham Number and DCF
-// If only one method is available, use it alone
+// ─── Composite Intrinsic Value ─────────────────────────────────────────────────
+//
+// Weighting is now sector-aware:
+// - Capital-light / technology: book value is largely intangible → weight DCF 80%
+// - Asset-heavy / traditional: Graham Number is more meaningful → weight 40/60
+//
+// Cyclical businesses: use normalizedEps for the Graham Number calculation if
+// available, to avoid valuing at peak-cycle earnings.
+
+function isCapitalLight(sector?: string): boolean {
+  const lightSectors = ['technology', 'communication', 'software', 'healthcare', 'financial services', 'media']
+  const s = (sector ?? '').toLowerCase()
+  return lightSectors.some(ls => s.includes(ls))
+}
+
 export function calculateIntrinsicValue(
   fundamentals: StockFundamentals,
-  sharesOutstanding?: number
+  sharesOutstanding?: number,
+  discountRate?: number
 ): IntrinsicValueResult {
   const price = fundamentals.price
 
+  // For cyclical businesses, use normalized EPS in the Graham Number
+  const epsForGraham = fundamentals.isCyclical && fundamentals.normalizedEps
+    ? fundamentals.normalizedEps
+    : fundamentals.eps
+
   let grahamNumber: number | undefined
-  if (fundamentals.eps && fundamentals.bookValuePerShare) {
-    grahamNumber = calculateGrahamNumber(fundamentals.eps, fundamentals.bookValuePerShare)
+  if (epsForGraham && fundamentals.bookValuePerShare) {
+    grahamNumber = calculateGrahamNumber(epsForGraham, fundamentals.bookValuePerShare)
   }
 
   let dcfResult:
@@ -96,20 +179,23 @@ export function calculateIntrinsicValue(
     dcfResult = calculateDCF({
       ownerEarnings: ownerEarningsPerShare,
       growthRate,
+      discountRate,  // passed from caller (autopilot config) or defaults to 0.10
     })
   }
 
-  // Determine composite intrinsic value
+  // Composite weighting — sector-aware
   let intrinsicValue: number
   if (grahamNumber && dcfResult) {
-    // Weight DCF more heavily (60%) as it accounts for earnings power
-    intrinsicValue = grahamNumber * 0.4 + dcfResult.dcfValue * 0.6
+    // Capital-light businesses: book value reflects little of earning power → 80% DCF
+    // Traditional businesses: Graham Number is more meaningful → 60% DCF
+    const dcfWeight = isCapitalLight(fundamentals.sector) ? 0.80 : 0.60
+    const gnWeight  = 1 - dcfWeight
+    intrinsicValue = grahamNumber * gnWeight + dcfResult.dcfValue * dcfWeight
   } else if (dcfResult) {
     intrinsicValue = dcfResult.dcfValue
   } else if (grahamNumber) {
     intrinsicValue = grahamNumber
   } else {
-    // No valid calculation possible
     return {
       currentPrice: price,
       intrinsicValue: 0,
@@ -118,7 +204,6 @@ export function calculateIntrinsicValue(
     }
   }
 
-  // Margin of Safety = (Intrinsic Value - Price) / Intrinsic Value
   const marginOfSafety =
     intrinsicValue > 0 ? ((intrinsicValue - price) / intrinsicValue) * 100 : 0
 

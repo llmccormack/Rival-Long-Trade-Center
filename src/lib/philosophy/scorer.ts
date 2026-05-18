@@ -39,6 +39,18 @@ export function scoreBuyDecision(
   const vetoed: Principle[] = []
   const audit: string[] = []
 
+  // Sector flags used throughout scoring — defined once to avoid repetition
+  // Banks/insurance: current ratio < 1 is structural (fractional reserve), not a solvency signal
+  const isFinancialSector =
+    fundamentals.sector?.toLowerCase().includes('financial') ||
+    fundamentals.sector?.toLowerCase().includes('bank') ||
+    fundamentals.industry?.toLowerCase().includes('bank') ||
+    fundamentals.industry?.toLowerCase().includes('insurance')
+  // Capital-light sectors: book value reflects little of earning power (intangibles dominate)
+  const isCapitalLightSector = ['technology', 'communication', 'software', 'healthcare', 'media'].some(s =>
+    (fundamentals.sector ?? '').toLowerCase().includes(s)
+  )
+
   // ── Hard Vetoes (any one fails = no buy) ──────────────────────────────────
 
   // Earnings power veto: must have positive owner earnings
@@ -48,8 +60,8 @@ export function scoreBuyDecision(
     audit.push(`VETO: Owner earnings are negative (${ (fundamentals.ownerEarnings ?? 0).toFixed(0) }). Business is consuming capital, not generating it. (Buffett 1977)`)
   }
 
-  // No NCAV for current ratio veto: below 1.0 is existential risk
-  if (fundamentals.currentRatio !== undefined && fundamentals.currentRatio < 1.0) {
+  // Current ratio veto — skipped for banks/financials (CR < 1 is structural, not a liquidity failure)
+  if (fundamentals.currentRatio !== undefined && fundamentals.currentRatio < 1.0 && !isFinancialSector) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_financial_strength')!
     vetoed.push(p)
     audit.push(`VETO: Current ratio ${fundamentals.currentRatio.toFixed(2)} is below 1.0. Business cannot meet short-term obligations. (Intelligent Investor Ch.14)`)
@@ -103,12 +115,14 @@ export function scoreBuyDecision(
 
   // ── Balance Sheet Principles ───────────────────────────────────────────────
 
-  if (fundamentals.currentRatio !== undefined) {
+  if (fundamentals.currentRatio !== undefined && !isFinancialSector) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_financial_strength')!
     const score = fundamentals.currentRatio >= 2 ? 1 : fundamentals.currentRatio >= 1.5 ? 0.6 : 0.2
     triggered.push({ principle: p, score, note: `Current ratio: ${fundamentals.currentRatio.toFixed(2)} (need ≥2.0)` })
     if (!criteria.passedCurrentRatio) audit.push(`FAIL: Current ratio ${fundamentals.currentRatio.toFixed(2)} below Graham's minimum of 2.0. Financial strength insufficient. (Intelligent Investor Ch.14)`)
     else audit.push(`PASS: Current ratio ${fundamentals.currentRatio.toFixed(2)} — adequate financial strength.`)
+  } else if (isFinancialSector && fundamentals.debtToEquity !== undefined) {
+    audit.push(`INFO: Financial sector — current ratio not applicable. Evaluating leverage and capital adequacy instead.`)
   }
 
   // Leverage check (Buffett 2007)
@@ -168,20 +182,47 @@ export function scoreBuyDecision(
     if (fundamentals.roic >= 0.15) audit.push(`PASS: ROIC ${(fundamentals.roic * 100).toFixed(1)}% — above cost of capital, business creates economic value. (Buffett 2017)`)
   }
 
-  // Dividend record
-  if (criteria.dividendYears !== undefined) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_dividend_record')!
-    const divScore = criteria.dividendYears >= 20 ? 1 : criteria.dividendYears >= 10 ? 0.6 : criteria.dividendYears >= 5 ? 0.3 : 0
-    triggered.push({ principle: p, score: divScore, note: `Dividend history: ${criteria.dividendYears} years (need ≥20)` })
-    if (!criteria.passedDividends) audit.push(`FAIL: Only ${criteria.dividendYears} years of dividends — does not meet 20-year requirement. Business has not proven consistent cash generation. (Intelligent Investor Ch.14)`)
-    else audit.push(`PASS: ${criteria.dividendYears} years of uninterrupted dividends. (Intelligent Investor Ch.14)`)
+  // Dividend record — high ROIC is an equally valid alternative.
+  // Buffett: Berkshire has paid $0 in dividends since 1967. Amazon, Alphabet, Meta paid none for years.
+  // A business reinvesting at 20%+ ROIC creates far more value than paying dividends at 6% yield.
+  {
+    const roicForDiv = fundamentals.roic
+    const hasMoatReinvestment = roicForDiv !== undefined && roicForDiv >= 0.15
+    if (criteria.dividendYears !== undefined || hasMoatReinvestment) {
+      const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_dividend_record')!
+      const divScore = criteria.dividendYears !== undefined
+        ? (criteria.dividendYears >= 20 ? 1 : criteria.dividendYears >= 10 ? 0.6 : criteria.dividendYears >= 5 ? 0.3 : 0)
+        : 0
+      const roicAlt = hasMoatReinvestment ? ((roicForDiv ?? 0) >= 0.20 ? 1.0 : 0.80) : 0
+      const finalScore = Math.max(divScore, roicAlt)
+      triggered.push({
+        principle: p, score: finalScore,
+        note: divScore >= roicAlt
+          ? `Dividend history: ${criteria.dividendYears ?? 0} years (need ≥20)`
+          : `ROIC ${((roicForDiv ?? 0) * 100).toFixed(1)}% — reinvesting above cost of capital beats dividend payout`
+      })
+      if (finalScore >= 0.8) {
+        if (divScore >= roicAlt) {
+          audit.push(`PASS: ${criteria.dividendYears} years of uninterrupted dividends. (Intelligent Investor Ch.14)`)
+        } else {
+          audit.push(`PASS: ROIC ${((roicForDiv ?? 0) * 100).toFixed(1)}% — high-ROIC reinvestment is superior capital allocation to dividend payments. Berkshire has paid $0 in dividends since 1967. (Buffett)`)
+        }
+      } else if (finalScore >= 0.3) {
+        audit.push(`PARTIAL: ${criteria.dividendYears ?? 0} year dividend record; ROIC ${hasMoatReinvestment ? ((roicForDiv ?? 0) * 100).toFixed(1) + '%' : 'N/A'} — limited capital allocation evidence.`)
+      } else {
+        audit.push(`FAIL: Only ${criteria.dividendYears ?? 0} years of dividends and ROIC ${hasMoatReinvestment ? ((roicForDiv ?? 0) * 100).toFixed(1) + '%' : 'unavailable'} — weak capital allocation track record. (Intelligent Investor Ch.14)`)
+      }
+    }
   }
 
-  // P/B check
-  if (fundamentals.pb !== undefined) {
+  // P/B check — skipped for capital-light sectors (book value is dominated by intangibles not on the balance sheet)
+  // Apple P/B ~40, Google P/B ~6 — these are not "expensive" by book value; their moat IS the book value
+  if (fundamentals.pb !== undefined && !isCapitalLightSector) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_moderate_pb')!
     const pbScore = fundamentals.pb <= 1.5 ? 1 : fundamentals.pb <= 2.5 ? 0.5 : 0
     triggered.push({ principle: p, score: pbScore, note: `P/B: ${fundamentals.pb.toFixed(2)} (need ≤1.5 for Graham criteria)` })
+  } else if (fundamentals.pb !== undefined && isCapitalLightSector) {
+    audit.push(`INFO: Capital-light sector — P/B ratio skipped. Book value understates earning power of intangible assets. Use DCF and ROIC instead. (Buffett)`)
   }
 
   // ── Greenblatt Magic Formula ───────────────────────────────────────────────
@@ -321,9 +362,9 @@ export function scoreBuyDecision(
     }
   }
 
-  // ── Walter Schloss: P/B Deep Value Entry ─────────────────────────────────
+  // ── Walter Schloss: P/B Deep Value Entry — skipped for capital-light sectors ──
 
-  if (fundamentals.pb !== undefined) {
+  if (fundamentals.pb !== undefined && !isCapitalLightSector) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'ws_low_pb_entry')!
     if (p) {
       const wsScore = fundamentals.pb <= 0.75 ? 1 : fundamentals.pb <= 1.0 ? 0.85 : fundamentals.pb <= 1.5 ? 0.5 : 0.1
@@ -407,83 +448,6 @@ export function scoreBuyDecision(
     categoryScores: buildCategoryScores(triggered),
     triggeredPrinciples: triggered,
     vetoedBy: [],
-    auditTrail: audit,
-  }
-}
-
-// ─── Sell Scorer ──────────────────────────────────────────────────────────────
-
-export interface SellAssessment {
-  shouldSell: boolean
-  signal: TradeSignal
-  reasons: string[]
-  auditTrail: string[]
-}
-
-export function scoreSellDecision(
-  fundamentals: StockFundamentals,
-  criteria: GrahamCriteria,
-  iv: IntrinsicValueResult,
-  avgCostBasis: number
-): SellAssessment {
-  const reasons: string[] = []
-  const audit: string[] = []
-
-  audit.push('SELL ANALYSIS — applying Graham/Buffett sell discipline:')
-  audit.push('"Never sell a stock because the price has declined. Sell only when the business has declined." — Graham/Buffett synthesis')
-
-  // Price decline is NEVER a reason
-  const priceChange = ((fundamentals.price - avgCostBasis) / avgCostBasis) * 100
-  if (priceChange < -20) {
-    audit.push(`HOLD: Price is down ${Math.abs(priceChange).toFixed(1)}% from cost basis — this is Mr. Market's pessimism, NOT a sell signal. (Intelligent Investor Ch.8)`)
-  }
-
-  // Check each sell principle
-  let shouldSell = false
-
-  // 1. Earnings deficit
-  if (!criteria.passedNoDeficit) {
-    reasons.push('Earnings deficit detected in recent history')
-    audit.push(`WARN: Earnings deficit appearing — monitor for second consecutive year. Sell if trend continues. (Intelligent Investor Ch.14)`)
-  }
-
-  // 2. Balance sheet deterioration
-  if (fundamentals.currentRatio !== undefined && fundamentals.currentRatio < 1.5) {
-    reasons.push(`Current ratio deteriorated to ${fundamentals.currentRatio.toFixed(2)}`)
-    audit.push(`WARN: Current ratio ${fundamentals.currentRatio.toFixed(2)} — approaching distress territory. Review debt covenants and refinancing risk. (Intelligent Investor Ch.14)`)
-    if (fundamentals.currentRatio < 1.0) {
-      shouldSell = true
-      audit.push(`SELL: Current ratio below 1.0 — business cannot meet short-term obligations. Capital at risk of permanent loss. (Security Analysis Part III)`)
-    }
-  }
-
-  // 3. Dangerous leverage
-  if (fundamentals.debtToEquity !== undefined && fundamentals.debtToEquity > 3) {
-    reasons.push(`Debt/Equity of ${fundamentals.debtToEquity.toFixed(2)}× is existential risk`)
-    shouldSell = true
-    audit.push(`SELL: D/E ${fundamentals.debtToEquity.toFixed(2)}× — "leverage is the only way a smart person goes broke." (Buffett 2007)`)
-  }
-
-  // 4. ROE collapse — moat destruction
-  if (fundamentals.roe !== undefined && fundamentals.roe < 0.05) {
-    reasons.push(`ROE collapsed to ${(fundamentals.roe * 100).toFixed(1)}% — moat may be gone`)
-    audit.push(`WARN: ROE ${(fundamentals.roe * 100).toFixed(1)}% — business is barely earning its cost of equity. Monitor for structural moat loss. (Buffett 1990)`)
-  }
-
-  // 5. Stock materially above intrinsic value
-  if (iv.marginOfSafety < -30) {
-    reasons.push(`Stock trading ${Math.abs(iv.marginOfSafety).toFixed(1)}% above intrinsic value`)
-    audit.push(`CONSIDER: Stock is ${Math.abs(iv.marginOfSafety).toFixed(1)}% above intrinsic value. For a wonderful business, this may still warrant holding if ROIC and moat are intact. For a Graham cigar-butt, sell and redeploy. (Buffett 1997)`)
-  }
-
-  if (!shouldSell && reasons.length === 0) {
-    audit.push(`HOLD: All fundamental indicators remain sound. Mr. Market's price is irrelevant — the business continues compounding. (Buffett 2014)`)
-  }
-
-  return {
-    shouldSell,
-    signal: shouldSell ? 'SELL' : reasons.length > 1 ? 'REDUCE' : 'HOLD',
-    reasons,
     auditTrail: audit,
   }
 }

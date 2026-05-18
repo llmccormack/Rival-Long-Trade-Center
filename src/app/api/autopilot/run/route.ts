@@ -35,11 +35,23 @@ export async function POST(request: NextRequest) {
     include: { stock: true },
   })
 
+  // Compute total deployed capital once — used for cash reserve floor check each iteration
+  const openPaperPositions = await prisma.paperPortfolioItem.findMany({
+    where: { isOpen: true },
+    select: { shares: true, currentPrice: true, avgCostBasis: true },
+  })
+  const deployedCapital = openPaperPositions.reduce(
+    (s, p) => s + p.shares * (p.currentPrice ?? p.avgCostBasis), 0
+  )
+
+  const discountRate = ((config.discountRate ?? 10) / 100)
+  const minCashReservePct = config.minCashReservePct ?? 15
+
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
       const criteria = applyGrahamCriteria(fundamentals)
-      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
+      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news)
 
@@ -92,6 +104,9 @@ export async function POST(request: NextRequest) {
           openPositionCount: openCount,
           maxPositions: config.maxPositions ?? 15,
           existingPositionValue: existingValue,
+          deployedCapital,
+          minCashReservePct,
+          avgCostBasis: existing?.avgCostBasis,
         })
 
         if (!allocation.canAllocate) {

@@ -28,13 +28,23 @@ export function scoreSellDecision(
   }
 
   // ── Price has reached or exceeded intrinsic value ────────────────────────
-  // Graham Ch.20: sell when MOS disappears. Target sell at IV, latest at IV+15%.
-  if (iv.marginOfSafety < 5 && iv.marginOfSafety > -15) {
-    signals.push(`Price approaching intrinsic value — MOS only ${iv.marginOfSafety.toFixed(1)}%`)
-    urgency = 'high'
+  // Moat businesses (ROE≥15%, ROIC≥15%, stable/improving margins) warrant patience:
+  // Buffett holds Coca-Cola, Apple, AmEx through extended overvaluation because the moat
+  // continues to compound. Require 40% overvaluation before selling a moat business.
+  // Ordinary businesses: Graham Ch.20 standard — sell at IV, latest at IV+15%.
+  const hasMoat =
+    fundamentals.roe !== undefined && fundamentals.roe >= 0.15 &&
+    fundamentals.roic !== undefined && fundamentals.roic >= 0.15 &&
+    (fundamentals.operatingMarginTrend === 'stable' || fundamentals.operatingMarginTrend === 'improving')
+  const sellThreshold = hasMoat ? -40 : -15
+
+  if (iv.marginOfSafety < 5 && iv.marginOfSafety > sellThreshold) {
+    const moatNote = hasMoat ? ' — moat-adjusted patience; hold unless fundamentals deteriorate' : ''
+    signals.push(`Price at or above intrinsic value — MOS ${iv.marginOfSafety.toFixed(1)}%${moatNote}`)
+    urgency = hasMoat ? 'moderate' : 'high'
   }
-  if (iv.marginOfSafety <= -15) {
-    signals.push(`Price ABOVE intrinsic value by ${Math.abs(iv.marginOfSafety).toFixed(1)}% — overvalued`)
+  if (iv.marginOfSafety <= sellThreshold) {
+    signals.push(`Price ABOVE intrinsic value by ${Math.abs(iv.marginOfSafety).toFixed(1)}% — exceeds ${hasMoat ? 'moat-adjusted 40%' : '15%'} sell threshold`)
     urgency = 'immediate'
   }
 

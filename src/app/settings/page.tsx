@@ -13,6 +13,8 @@ interface Config {
   maxPositionPct: number
   totalCapital: number
   maxPositions: number
+  discountRate: number
+  minCashReservePct: number
   schwabAccountId: string | null
   lastRunAt: string | null
 }
@@ -102,6 +104,8 @@ export default function SettingsPage() {
           maxPositionPct: config.maxPositionPct,
           totalCapital: config.totalCapital,
           maxPositions: config.maxPositions,
+          discountRate: config.discountRate,
+          minCashReservePct: config.minCashReservePct,
         }),
       })
       const updated = await res.json()
@@ -320,7 +324,49 @@ export default function SettingsPage() {
                   <span>Max per position</span>
                   <span className="font-mono text-zinc-300">{config.maxPositionPct ?? 10}% · ${((config.totalCapital ?? 10000) * (config.maxPositionPct ?? 10) / 100).toLocaleString()}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Cash reserve floor</span>
+                  <span className="font-mono text-amber-400">{config.minCashReservePct ?? 15}% · ${((config.totalCapital ?? 10000) * (config.minCashReservePct ?? 15) / 100).toLocaleString()} held back</span>
+                </div>
                 <p className="text-zinc-700 pt-1 border-t border-zinc-800">MOS and score multipliers adjust each position ±30% from base. Buffett: size your best ideas bigger.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs text-zinc-400">DCF Discount Rate</label>
+                    <span className="text-xs font-mono font-bold text-blue-400">{config.discountRate ?? 10}%</span>
+                  </div>
+                  <input
+                    type="range" min={7} max={15} step={0.5}
+                    value={config.discountRate ?? 10}
+                    onChange={e => setConfig({ ...config, discountRate: Number(e.target.value) })}
+                    className="w-full accent-blue-600"
+                  />
+                  <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                    <span>Aggressive (7%)</span>
+                    <span>Conservative (15%)</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-zinc-600">Risk-free ~4.5% + equity premium. 10% appropriate for high-quality stocks.</p>
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs text-zinc-400">Min Cash Reserve</label>
+                    <span className="text-xs font-mono font-bold text-amber-400">{config.minCashReservePct ?? 15}%</span>
+                  </div>
+                  <input
+                    type="range" min={5} max={40} step={5}
+                    value={config.minCashReservePct ?? 15}
+                    onChange={e => setConfig({ ...config, minCashReservePct: Number(e.target.value) })}
+                    className="w-full accent-amber-600"
+                  />
+                  <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                    <span>Aggressive (5%)</span>
+                    <span>Defensive (40%)</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-zinc-600">Buffett always keeps dry powder. Never deploy below this floor.</p>
+                </div>
               </div>
             </div>
 

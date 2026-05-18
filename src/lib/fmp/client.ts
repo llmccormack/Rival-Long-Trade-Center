@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios'
 import type { StockFundamentals, YearlyValue } from '@/types'
+import { detectCyclicality, normalizeEps } from '@/lib/graham/intrinsic-value'
 
 const BASE_URL = 'https://financialmodelingprep.com/api/v3'
 
@@ -260,12 +261,32 @@ export async function getTickerNews(ticker: string, limit = 15): Promise<NewsAna
     // news is best-effort; don't block fundamentals on failure
   }
 
+  // FIX #14: Negation-aware keyword detection.
+  // Old code fired on "Company X avoids SEC investigation" or "no fraud found."
+  // Now checks for negation words within 35 chars before the veto keyword.
+  const NEGATION_PREFIXES = [
+    'no ', 'not ', 'avoids ', 'avoid ', 'cleared ', 'clears ', 'dismisses ', 'dismissed ',
+    'denies ', 'denied ', 'denying ', 'rejects ', 'rejected ', 'without ', 'finds no ',
+    'found no ', 'no evidence of ', 'ruled out ', 'no sign of ', 'acquitted ',
+  ]
+
+  function hasKeywordWithoutNegation(text: string, keyword: string): boolean {
+    let pos = text.indexOf(keyword)
+    while (pos !== -1) {
+      const context = text.substring(Math.max(0, pos - 40), pos)
+      const negated = NEGATION_PREFIXES.some(neg => context.endsWith(neg) || context.includes(neg))
+      if (!negated) return true
+      pos = text.indexOf(keyword, pos + 1)
+    }
+    return false
+  }
+
   const hardVetoFlags: string[] = []
   const disruptionFlags: string[] = []
 
   for (const item of items) {
     const combined = `${item.title} ${item.text ?? ''}`.toLowerCase()
-    if (HARD_VETO_KEYWORDS.some((kw) => combined.includes(kw))) {
+    if (HARD_VETO_KEYWORDS.some((kw) => hasKeywordWithoutNegation(combined, kw))) {
       hardVetoFlags.push(item.title)
     }
     if (DISRUPTION_KEYWORDS.some((kw) => combined.includes(kw))) {
@@ -360,17 +381,24 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
   const price = quote?.price ?? profile?.price ?? 0
   const shares = quote?.sharesOutstanding ?? 0
 
-  // Owner Earnings = Net Income + D&A - CapEx
+  // FIX #2: Owner Earnings uses maintenance CapEx, not total CapEx.
+  // Buffett 1986 letter: owner earnings = net income + D&A - *maintenance* CapEx.
+  // Maintenance CapEx = spending to maintain current earning power = min(CapEx, D&A).
+  // Growth CapEx (total - maintenance) is optional spending, not a cost of owning the business.
+  const da = latest.cashFlow?.depreciationAndAmortization ?? 0
+  const totalCapEx = Math.abs(latest.cashFlow?.capitalExpenditure ?? 0)
+  const maintenanceCapEx = Math.min(totalCapEx, da)
   const ownerEarnings =
     latest.income && latest.cashFlow
-      ? latest.income.netIncome +
-        (latest.cashFlow.depreciationAndAmortization ?? 0) -
-        Math.abs(latest.cashFlow.capitalExpenditure ?? 0)
+      ? latest.income.netIncome + da - maintenanceCapEx
       : undefined
 
+  // FIX #13: Use working capital (current assets - current liabilities) consistently.
+  // Old code subtracted totalLiabilities (all debt) which is NCAV, a different metric.
+  // Graham's Ch.14 debt test uses working capital; NCAV is the separate net-net screen.
   const netCurrentAssets =
     latest.balance
-      ? latest.balance.totalCurrentAssets - latest.balance.totalLiabilities
+      ? latest.balance.totalCurrentAssets - latest.balance.totalCurrentLiabilities
       : undefined
 
   // Net cash = cash - total debt (Klarman liquidation floor)
@@ -414,7 +442,7 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
 
   // PEG: P/E ÷ EPS growth rate
   // Use FMP's field if available; otherwise compute from history
-  let peg = latest.metrics?.pegRatio || undefined
+  let peg = latest.metrics?.pegRatio ?? undefined
   if (!peg && quote?.pe && quote.pe > 0) {
     const epsHist = incomeStmts
       .map((s) => ({ year: parseInt(s.calendarYear), value: s.epsdiluted }))
@@ -431,13 +459,13 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     }
   }
 
-  // Earnings yield (Greenblatt): EBIT / EV
-  // FMP key-metrics provides earningsYield directly
-  const earningsYield = latest.metrics?.earningsYield || undefined
+  // FIX #5: Use nullish coalescing (??) not logical OR (||).
+  // earningsYield = 0 is a valid (meaningful) value for a breakeven company.
+  // `0 || undefined` silently drops it; `0 ?? undefined` preserves it.
+  const earningsYield = latest.metrics?.earningsYield ?? undefined
 
-  // Price to cash flow ratios (Dreman)
-  const priceToFreeCashFlow     = latest.metrics?.priceToFreeCashFlowsRatio || undefined
-  const priceToOperatingCashFlow = latest.metrics?.priceToOperatingCashFlowsRatio || undefined
+  const priceToFreeCashFlow      = latest.metrics?.priceToFreeCashFlowsRatio ?? undefined
+  const priceToOperatingCashFlow = latest.metrics?.priceToOperatingCashFlowsRatio ?? undefined
 
   // Build history arrays
   const epsHistory: YearlyValue[] = incomeStmts
@@ -520,6 +548,7 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
 
     operatingCashFlow: latest.cashFlow?.operatingCashFlow,
     capitalExpenditures: latest.cashFlow?.capitalExpenditure,
+    maintenanceCapEx,
     freeCashFlow: latest.cashFlow?.freeCashFlow,
     depreciation: latest.cashFlow?.depreciationAndAmortization,
     ownerEarnings,
@@ -534,6 +563,10 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     bookValueHistory,
     operatingMarginHistory: opMarginHistory,
     roicHistory,
+
+    // FIX #9: Cyclical businesses need normalized earnings to avoid peak-cycle traps
+    isCyclical: epsHistory.length >= 5 ? detectCyclicality(epsHistory) : false,
+    normalizedEps: epsHistory.length >= 5 ? normalizeEps(epsHistory) : undefined,
   }
 
   cache.set(cacheKey, result, FUNDAMENTALS_TTL)
