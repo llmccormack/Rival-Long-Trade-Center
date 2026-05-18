@@ -102,6 +102,9 @@ export default function AutopilotPage() {
   const [portfolio, setPortfolio] = useState<PaperPortfolio | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
+  const [fullRunning, setFullRunning] = useState(false)
+  const [fullRunStep, setFullRunStep] = useState(0)
+  const [fullRunResult, setFullRunResult] = useState<any>(null)
 
   useEffect(() => {
     Promise.all([
@@ -131,6 +134,32 @@ export default function AutopilotPage() {
       if (portfolioData?.positions) setPortfolio(portfolioData)
     } finally {
       setRunning(false)
+    }
+  }
+
+  const runFull = async () => {
+    setFullRunning(true)
+    setFullRunStep(1)
+    setFullRunResult(null)
+    try {
+      // Steps animate while the single request runs
+      const stepTimer = setInterval(() => {
+        setFullRunStep(s => (s < 3 ? s + 1 : s))
+      }, 4000)
+      const res = await fetch('/api/autopilot/full-run', { method: 'POST' })
+      clearInterval(stepTimer)
+      setFullRunStep(3)
+      const result = await res.json()
+      if (!result.error) {
+        setFullRunResult(result)
+        setLastRun(result)
+      }
+      const portfolioRes = await fetch('/api/paper-portfolio')
+      const portfolioData = await portfolioRes.json()
+      if (portfolioData?.positions) setPortfolio(portfolioData)
+    } finally {
+      setFullRunning(false)
+      setFullRunStep(0)
     }
   }
 
@@ -198,10 +227,33 @@ export default function AutopilotPage() {
 
           <button
             onClick={runNow}
-            disabled={running}
-            className="rounded-lg border border-violet-700/50 bg-violet-900/20 px-4 py-2 text-sm font-medium text-violet-400 hover:bg-violet-900/30 disabled:opacity-40 transition-colors"
+            disabled={running || fullRunning}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-500 disabled:opacity-40 transition-colors"
           >
-            {running ? 'Running…' : 'Run Now'}
+            {running ? 'Running…' : 'Run Watchlist'}
+          </button>
+
+          <button
+            onClick={runFull}
+            disabled={running || fullRunning}
+            className="relative flex items-center gap-2 rounded-lg border border-violet-600/60 bg-violet-600/10 px-5 py-2 text-sm font-semibold text-violet-300 hover:bg-violet-600/20 disabled:opacity-40 transition-all"
+          >
+            {fullRunning ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+                </span>
+                Running Full Autopilot…
+              </>
+            ) : (
+              <>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                </svg>
+                Full Auto Run
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -215,6 +267,68 @@ export default function AutopilotPage() {
           <p className="text-sm text-amber-400/80">
             <span className="font-semibold text-amber-400">Paper Trading Mode</span> — All decisions are simulated. No real orders will be placed. Switch to Live to connect your Schwab account.
           </p>
+        </div>
+      )}
+
+      {/* Full auto run — progress + result */}
+      {(fullRunning || fullRunResult) && (
+        <div className="rounded-xl border border-violet-800/40 bg-violet-900/10 p-5">
+          {fullRunning && (
+            <>
+              <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Autopilot Running</div>
+              <div className="flex items-center gap-0">
+                {[
+                  { n: 1, label: 'Scanning market' },
+                  { n: 2, label: 'Populating watchlist' },
+                  { n: 3, label: 'Executing trades' },
+                ].map(({ n, label }, i) => (
+                  <div key={n} className="flex items-center gap-0">
+                    <div className={cn(
+                      'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-all',
+                      fullRunStep >= n ? 'text-violet-300' : 'text-zinc-600'
+                    )}>
+                      <span className={cn(
+                        'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold',
+                        fullRunStep > n ? 'bg-violet-600 text-white' :
+                        fullRunStep === n ? 'bg-violet-500/30 text-violet-300 ring-1 ring-violet-500 animate-pulse' :
+                        'bg-zinc-800 text-zinc-600'
+                      )}>{fullRunStep > n ? '✓' : n}</span>
+                      {label}
+                    </div>
+                    {i < 2 && <span className="text-zinc-700 mx-1">→</span>}
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-zinc-600">This scans ~40 stocks via FMP and may take 1–2 minutes…</p>
+            </>
+          )}
+
+          {!fullRunning && fullRunResult && (
+            <>
+              <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Run Complete</div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+                {[
+                  { label: 'Stocks Scanned', value: fullRunResult.candidatesScanned },
+                  { label: 'Added to Watchlist', value: fullRunResult.newlyPromoted?.length ?? 0, highlight: true },
+                  { label: 'Trades Executed', value: fullRunResult.buys, highlight: true },
+                  { label: 'Blocked by Veto', value: fullRunResult.vetoed },
+                ].map(({ label, value, highlight }) => (
+                  <div key={label} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+                    <div className="text-[10px] text-zinc-600 uppercase tracking-widest">{label}</div>
+                    <div className={cn('text-2xl font-mono font-bold mt-1', highlight && value > 0 ? 'text-violet-400' : 'text-zinc-300')}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              {fullRunResult.newlyPromoted?.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="text-xs text-zinc-600">Added to watchlist:</span>
+                  {fullRunResult.newlyPromoted.map((t: string) => (
+                    <span key={t} className="rounded border border-violet-800/50 bg-violet-900/20 px-2 py-0.5 text-xs font-mono text-violet-400">{t}</span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
