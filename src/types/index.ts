@@ -181,6 +181,8 @@ export interface WatchlistEntry {
   isBuySignal: boolean
   addedAt: Date
   notes?: string
+  expectedCagr10yr?: number
+  businessTier?: BusinessTier
 }
 
 export interface Alert {

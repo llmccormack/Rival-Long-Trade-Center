@@ -68,11 +68,30 @@ export default async function AnalysisPage({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-bold text-zinc-100 font-mono">{ticker.toUpperCase()}</h1>
             <span className={`rounded-lg border px-2.5 py-0.5 text-xs font-semibold ${criteria.overallPass ? 'border-emerald-800/50 bg-emerald-900/20 text-emerald-400' : 'border-zinc-700 bg-zinc-900 text-zinc-500'}`}>
               {criteria.overallPass ? 'PASSES GRAHAM' : 'FAILS GRAHAM'}
             </span>
+            {fundamentals.businessTier && (() => {
+              const tierCfg: Record<string, { label: string; cls: string }> = {
+                wonderful: { label: '★ WONDERFUL', cls: 'border-amber-700/60 bg-amber-900/20 text-amber-400' },
+                good:      { label: '◆ GOOD',      cls: 'border-sky-800/50 bg-sky-900/15 text-sky-400' },
+                adequate:  { label: '◇ ADEQUATE',  cls: 'border-zinc-700 bg-zinc-800 text-zinc-400' },
+                mediocre:  { label: '▽ MEDIOCRE',  cls: 'border-red-900/50 bg-red-900/10 text-red-500' },
+              }
+              const t = tierCfg[fundamentals.businessTier]
+              return t ? (
+                <span className={`rounded-lg border px-2.5 py-0.5 text-xs font-semibold ${t.cls}`} title="Business quality tier — drives sell threshold">
+                  {t.label}
+                </span>
+              ) : null
+            })()}
+            {fundamentals.isNetNet && (
+              <span className="rounded-lg border border-violet-700/60 bg-violet-900/20 px-2.5 py-0.5 text-xs font-semibold text-violet-400" title="Price below 67% of Net Current Asset Value — Graham's deepest method">
+                NET-NET
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-zinc-500">
             {fundamentals.name} · {fundamentals.sector} · {fundamentals.exchange}
@@ -103,6 +122,22 @@ export default async function AnalysisPage({
           <MetricCard label="Graham Number" value={iv.grahamNumber ? formatCurrency(iv.grahamNumber) : '—'} description="sqrt(22.5 × EPS × BV/share)" />
           <MetricCard label="DCF Value" value={iv.dcfValue ? formatCurrency(iv.dcfValue) : '—'} description={`Growth: ${iv.growthRateUsed ? formatPct(iv.growthRateUsed * 100, 1) : '—'}`} />
           <MetricCard label="Owner Earnings" value={iv.ownerEarnings ? formatCurrency(iv.ownerEarnings / (fundamentals.sharesOutstanding ?? 1)) : '—'} description="NI + D&A − CapEx per share" />
+          <MetricCard
+            label="10yr Expected CAGR"
+            value={iv.expectedCagr10yr != null ? formatPct(iv.expectedCagr10yr * 100, 1) : '—'}
+            description="Buffett: return locked in today"
+            good={iv.expectedCagr10yr != null ? iv.expectedCagr10yr >= 0.10 : undefined}
+          />
+          <MetricCard
+            label="Shiller Fair Value"
+            value={iv.shillerCapePriceTarget ? formatCurrency(iv.shillerCapePriceTarget) : '—'}
+            description="Price at 20× 10yr avg EPS"
+          />
+          <MetricCard
+            label="Shiller EPS"
+            value={fundamentals.shillerEps ? formatCurrency(fundamentals.shillerEps) : '—'}
+            description={fundamentals.capeRatio ? `CAPE: ${fundamentals.capeRatio.toFixed(1)}×` : '10yr CPI-adj avg EPS'}
+          />
         </div>
       </div>
 
@@ -148,6 +183,92 @@ export default async function AnalysisPage({
           </div>
         </section>
       </div>
+
+      {/* Investor Lens — Shiller / Buffett / Graham signals */}
+      {(fundamentals.ncavPerShare != null || fundamentals.shareCountCagr5yr != null || fundamentals.ownerEarningsYield != null) && (
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+          <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">
+            Investor Lens — Shiller · Buffett · Graham
+          </h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+
+            {/* NCAV / Net-Net */}
+            {fundamentals.ncavPerShare != null && (
+              <div className={`rounded-lg border p-3 ${fundamentals.isNetNet ? 'border-violet-700/50 bg-violet-900/15' : 'border-zinc-800 bg-zinc-900/40'}`}>
+                <div className="text-[10px] text-zinc-600 mb-1">NCAV / Share</div>
+                <div className={`font-mono text-lg font-bold ${fundamentals.isNetNet ? 'text-violet-400' : 'text-zinc-300'}`}>
+                  {formatCurrency(fundamentals.ncavPerShare)}
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-600">
+                  {fundamentals.isNetNet
+                    ? `NET-NET — price is ${((fundamentals.price / fundamentals.ncavPerShare) * 100).toFixed(0)}% of NCAV`
+                    : `Price/NCAV: ${((fundamentals.price / fundamentals.ncavPerShare) * 100).toFixed(0)}%`}
+                </div>
+              </div>
+            )}
+
+            {/* Stock-level CAPE */}
+            {fundamentals.capeRatio != null && (
+              <div className={`rounded-lg border p-3 ${fundamentals.capeRatio < 15 ? 'border-emerald-800/50 bg-emerald-900/10' : fundamentals.capeRatio > 30 ? 'border-red-900/40 bg-red-900/10' : 'border-zinc-800 bg-zinc-900/40'}`}>
+                <div className="text-[10px] text-zinc-600 mb-1">Stock CAPE</div>
+                <div className={`font-mono text-lg font-bold ${fundamentals.capeRatio < 15 ? 'text-emerald-400' : fundamentals.capeRatio > 30 ? 'text-red-400' : 'text-zinc-300'}`}>
+                  {fundamentals.capeRatio.toFixed(1)}×
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-600">
+                  {fundamentals.capeRatio < 15 ? 'Below Shiller fair — rare value' : fundamentals.capeRatio < 20 ? 'Fair range (15–20×)' : fundamentals.capeRatio < 25 ? 'Above fair, not extreme' : 'Elevated — mean reversion risk'}
+                </div>
+              </div>
+            )}
+
+            {/* Share count trend */}
+            {fundamentals.shareCountCagr5yr != null && (
+              <div className={`rounded-lg border p-3 ${fundamentals.shareCountCagr5yr < -0.01 ? 'border-emerald-800/50 bg-emerald-900/10' : fundamentals.shareCountCagr5yr > 0.04 ? 'border-red-900/40 bg-red-900/10' : 'border-zinc-800 bg-zinc-900/40'}`}>
+                <div className="text-[10px] text-zinc-600 mb-1">Share Count Trend (5yr)</div>
+                <div className={`font-mono text-lg font-bold ${fundamentals.shareCountCagr5yr < -0.01 ? 'text-emerald-400' : fundamentals.shareCountCagr5yr > 0.04 ? 'text-red-400' : 'text-zinc-300'}`}>
+                  {fundamentals.shareCountCagr5yr > 0 ? '+' : ''}{formatPct(fundamentals.shareCountCagr5yr * 100, 1)}/yr
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-600">
+                  {fundamentals.shareCountCagr5yr < -0.01 ? 'Buybacks — growing per-share value' : fundamentals.shareCountCagr5yr > 0.04 ? 'Severe dilution — destroying per-share value' : fundamentals.shareCountCagr5yr > 0.01 ? 'Mild dilution' : 'Stable share count'}
+                </div>
+              </div>
+            )}
+
+            {/* Owner earnings yield vs treasury */}
+            {fundamentals.ownerEarningsYield != null && (
+              <div className={`rounded-lg border p-3 ${(fundamentals.ownerEarningsSpread ?? 0) > 0.05 ? 'border-emerald-800/50 bg-emerald-900/10' : (fundamentals.ownerEarningsSpread ?? 0) < 0 ? 'border-red-900/40 bg-red-900/10' : 'border-zinc-800 bg-zinc-900/40'}`}>
+                <div className="text-[10px] text-zinc-600 mb-1">OE Yield vs 10Y Treasury</div>
+                <div className={`font-mono text-lg font-bold ${(fundamentals.ownerEarningsSpread ?? 0) > 0.05 ? 'text-emerald-400' : (fundamentals.ownerEarningsSpread ?? 0) < 0 ? 'text-red-400' : 'text-zinc-300'}`}>
+                  {formatPct(fundamentals.ownerEarningsYield * 100, 1)}
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-600">
+                  {fundamentals.ownerEarningsSpread != null
+                    ? `Spread vs treasury: ${fundamentals.ownerEarningsSpread > 0 ? '+' : ''}${formatPct(fundamentals.ownerEarningsSpread * 100, 1)} (Buffett 1977)`
+                    : 'Owner earnings as % of price'}
+                </div>
+              </div>
+            )}
+
+            {/* Business quality tier context */}
+            {fundamentals.businessTier && (() => {
+              const tierDesc: Record<string, { hint: string; sellAt: string }> = {
+                wonderful: { hint: 'ROIC >20%, sustained, no dilution — hold through cycles', sellAt: 'Sell at 60% above IV' },
+                good:      { hint: 'ROIC 15-20%, solid franchise', sellAt: 'Sell at 40% above IV' },
+                adequate:  { hint: 'ROIC 10-15%, Graham standard', sellAt: 'Sell at 15% above IV' },
+                mediocre:  { hint: 'ROIC <10% — exit on any strength', sellAt: 'Sell at or below fair value' },
+              }
+              const td = tierDesc[fundamentals.businessTier]
+              return td ? (
+                <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 sm:col-span-2">
+                  <div className="text-[10px] text-zinc-600 mb-1">Business Quality Tier</div>
+                  <div className="font-mono text-sm font-bold text-zinc-200 uppercase">{fundamentals.businessTier}</div>
+                  <div className="text-[10px] mt-0.5 text-zinc-500">{td.hint}</div>
+                  <div className="text-[10px] mt-1 font-semibold text-zinc-400">{td.sellAt}</div>
+                </div>
+              ) : null
+            })()}
+          </div>
+        </section>
+      )}
 
       {/* Philosophy Score */}
       {philosophy && (
@@ -462,6 +583,13 @@ export default async function AnalysisPage({
             label="Book Value / Share"
             format="currency"
           />
+          {(fundamentals.sharesHistory?.length ?? 0) > 1 && (
+            <FundamentalChart
+              data={fundamentals.sharesHistory!}
+              label="Shares Outstanding"
+              format="number"
+            />
+          )}
         </div>
       </section>
     </div>

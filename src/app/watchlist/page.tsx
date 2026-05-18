@@ -126,7 +126,7 @@ export default function WatchlistPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900/80">
-                {['Ticker', 'Price', 'Intrinsic Value', 'Buy Target (30% MOS)', 'Margin of Safety', 'Signal', 'Added', ''].map(h => (
+                {['Ticker', 'Price', 'Intrinsic Value', 'Buy Target (30% MOS)', 'Margin of Safety', '10yr CAGR', 'Quality', 'Signal', 'Added', ''].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
                 ))}
               </tr>
@@ -163,6 +163,25 @@ export default function WatchlistPage() {
                         </div>
                       </div>
                     ) : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.expectedCagr10yr != null ? (
+                      <span className={cn('font-mono text-sm tabular-nums', item.expectedCagr10yr >= 0.10 ? 'text-emerald-400' : item.expectedCagr10yr >= 0.07 ? 'text-amber-400' : 'text-zinc-600')}>
+                        {(item.expectedCagr10yr * 100).toFixed(1)}%
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.businessTier ? (() => {
+                      const tierCfg: Record<string, { cls: string; short: string }> = {
+                        wonderful: { cls: 'text-amber-400', short: '★ WON' },
+                        good:      { cls: 'text-sky-400',   short: '◆ GOOD' },
+                        adequate:  { cls: 'text-zinc-400',  short: '◇ ADQ' },
+                        mediocre:  { cls: 'text-red-400',   short: '▽ MED' },
+                      }
+                      const t = tierCfg[item.businessTier]
+                      return t ? <span className={cn('font-mono text-xs font-semibold', t.cls)}>{t.short}</span> : null
+                    })() : '—'}
                   </td>
                   <td className="px-4 py-3">
                     {item.isBuySignal ? (

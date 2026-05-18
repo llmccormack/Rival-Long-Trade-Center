@@ -31,6 +31,8 @@ export async function GET() {
           isBuySignal: iv.isBuySignal,
           addedAt: item.addedAt,
           notes: item.notes,
+          expectedCagr10yr: iv.expectedCagr10yr,
+          businessTier: fund.businessTier,
         }
       } catch {
         return {

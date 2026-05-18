@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { prisma } from '@/lib/db/client'
 import { AlertsFeed } from '@/components/dashboard/AlertsFeed'
 import { PositionsTable } from '@/components/portfolio/PositionsTable'
+import { MarketTemperatureWidget } from '@/components/dashboard/MarketTemperatureWidget'
 import { formatCurrency } from '@/lib/utils'
 import Link from 'next/link'
 
@@ -159,6 +160,9 @@ export default async function DashboardPage() {
           </div>
         </Link>
       </div>
+
+      {/* Market Temperature */}
+      <MarketTemperatureWidget />
 
       {/* Holdings + Alerts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

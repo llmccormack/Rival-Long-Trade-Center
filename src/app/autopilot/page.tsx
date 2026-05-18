@@ -51,6 +51,14 @@ interface RunResult {
   buys: number
   skipped: number
   vetoed: number
+  macro?: {
+    sp500Cape: number
+    marketTemperature: string
+    treasury10yr: string
+    excessEarningsYield: string
+    effectiveMinScore: number
+    effectiveCashReservePct: number
+  }
   results: Array<{
     ticker: string
     action: string
@@ -270,6 +278,36 @@ export default function AutopilotPage() {
           </p>
         </div>
       )}
+
+      {/* Macro market context — shows last run's market temperature */}
+      {lastRun?.macro && (() => {
+        const temp = lastRun.macro.marketTemperature
+        const tempColors: Record<string, string> = {
+          cold:    'border-sky-800/50 bg-sky-900/10 text-sky-400',
+          fair:    'border-emerald-800/50 bg-emerald-900/10 text-emerald-400',
+          warm:    'border-amber-800/50 bg-amber-900/10 text-amber-400',
+          hot:     'border-orange-800/50 bg-orange-900/10 text-orange-400',
+          extreme: 'border-red-800/50 bg-red-900/10 text-red-400',
+        }
+        const cls = tempColors[temp] ?? 'border-zinc-700 bg-zinc-900 text-zinc-400'
+        return (
+          <div className={`rounded-xl border px-4 py-3 ${cls}`}>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-3">
+                <div className="text-[10px] font-medium uppercase tracking-widest opacity-70">Market Temperature at Run Time</div>
+                <span className="font-mono font-bold text-sm uppercase">{temp}</span>
+                <span className="font-mono text-sm opacity-80">CAPE {lastRun.macro.sp500Cape.toFixed(1)}×</span>
+              </div>
+              <div className="flex gap-4 text-xs font-mono">
+                <span className="text-zinc-500">10Y: <span className="text-zinc-300">{lastRun.macro.treasury10yr}</span></span>
+                <span className="text-zinc-500">Excess yield: <span className="text-zinc-300">{lastRun.macro.excessEarningsYield}</span></span>
+                <span className="text-zinc-500">Effective score gate: <span className="text-zinc-300">{lastRun.macro.effectiveMinScore}</span></span>
+                <span className="text-zinc-500">Cash reserve: <span className="text-zinc-300">{lastRun.macro.effectiveCashReservePct.toFixed(0)}%</span></span>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Full auto run — progress + result */}
       {(fullRunning || fullRunResult) && (
