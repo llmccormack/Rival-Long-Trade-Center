@@ -5,6 +5,7 @@ import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
+import { getMarketContext } from '@/lib/macro/market-context'
 
 // POST /api/autopilot/rebalance
 // Reviews all open positions for sell signals, then runs buy scan on watchlist.
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
+  // Fetch macro context once — treasury yield needed by sell scorer for OE spread
+  const macro = await getMarketContext()
+  const discountRate = (config.discountRate ?? 10) / 100
+
   const sellActions: any[] = []
   const holdActions: any[] = []
   const vetoActions: any[] = []
@@ -40,8 +45,14 @@ export async function POST(request: NextRequest) {
   for (const pos of openPositions) {
     try {
       const fundamentals = await getCompleteFundamentals(pos.stock.ticker)
+      if (macro?.treasury10yr) {
+        fundamentals.treasuryYield10yr = macro.treasury10yr
+        if (fundamentals.ownerEarningsYield !== undefined) {
+          fundamentals.ownerEarningsSpread = fundamentals.ownerEarningsYield - macro.treasury10yr
+        }
+      }
       const criteria = applyGrahamCriteria(fundamentals)
-      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
+      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(pos.stock.ticker)
 
       // Hard-veto news kills the hold immediately

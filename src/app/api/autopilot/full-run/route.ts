@@ -7,13 +7,15 @@ import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
+import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
 
 // POST /api/autopilot/full-run
-// Full pipeline: scan market → auto-populate watchlist → execute trades
+// Full pipeline: scan market → auto-populate watchlist → execute trades → review positions
 // Step 1: Yahoo pre-screen + FMP scoring → promote qualifying stocks to watchlist
-// Step 2: Run autopilot against full watchlist
+// Step 2: Run autopilot against full watchlist (macro-adjusted thresholds)
+// Step 3: Sell check on open positions
 export async function POST(request: NextRequest) {
   const secret = request.headers.get('authorization')?.replace('Bearer ', '')
   if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
@@ -31,6 +33,27 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
+  // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
+  // Fetch once per run — adjusts cash reserve and min score based on S&P 500 CAPE.
+  // All three phases (scan, trade, sell) use the same macro snapshot for consistency.
+  const macro = await getMarketContext()
+  const macroAudit = macro ? [formatMarketContext(macro)] : []
+
+  // Apply macro adjustments on top of user config
+  const effectiveMinScore    = (config.minPhilosophyScore ?? 55) + (macro?.minScoreAdj ?? 0)
+  const effectiveMinMos      = config.minMarginOfSafety ?? 30
+  const effectiveCashReserve = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
+  const discountRate         = (config.discountRate ?? 10) / 100
+
+  // Deployed capital — needed for cash reserve floor check in allocator
+  const openPaperPositions = await prisma.paperPortfolioItem.findMany({
+    where: { isOpen: true },
+    select: { shares: true, currentPrice: true, avgCostBasis: true },
+  })
+  const deployedCapital = openPaperPositions.reduce(
+    (s, p) => s + p.shares * (p.currentPrice ?? p.avgCostBasis), 0
+  )
+
   // ── Step 1: Market scan + watchlist population ───────────────────────────
   const scanStart = Date.now()
   const candidates = await getMarketCandidates({ maxPE: 18, maxPB: 2.0, minMarketCapM: 300 })
@@ -42,8 +65,15 @@ export async function POST(request: NextRequest) {
   for (const candidate of toAnalyse) {
     try {
       const fundamentals = await getCompleteFundamentals(candidate.symbol)
+      // Inject treasury yield so scorer can compute OE spread during scan phase
+      if (macro?.treasury10yr) {
+        fundamentals.treasuryYield10yr = macro.treasury10yr
+        if (fundamentals.ownerEarningsYield !== undefined) {
+          fundamentals.ownerEarningsSpread = fundamentals.ownerEarningsYield - macro.treasury10yr
+        }
+      }
       const criteria = applyGrahamCriteria(fundamentals)
-      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
+      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv)
 
       scanResults.push({
@@ -54,11 +84,11 @@ export async function POST(request: NextRequest) {
         vetoCount: philosophy.vetoedBy.length,
       })
 
-      // Auto-promote: no vetoes, score ≥ 55, MOS ≥ 30%
+      // Auto-promote using macro-adjusted thresholds (not hard-coded 55/30)
       if (
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= 55 &&
-        iv.marginOfSafety >= 30
+        philosophy.total >= effectiveMinScore &&
+        iv.marginOfSafety >= effectiveMinMos
       ) {
         const stock = await prisma.stock.upsert({
           where: { ticker: candidate.symbol },
@@ -101,8 +131,15 @@ export async function POST(request: NextRequest) {
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
+      // Inject treasury yield so scorer has OE spread data
+      if (macro?.treasury10yr) {
+        fundamentals.treasuryYield10yr = macro.treasury10yr
+        if (fundamentals.ownerEarningsYield !== undefined) {
+          fundamentals.ownerEarningsSpread = fundamentals.ownerEarningsYield - macro.treasury10yr
+        }
+      }
       const criteria = applyGrahamCriteria(fundamentals)
-      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
+      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news)
 
@@ -127,8 +164,8 @@ export async function POST(request: NextRequest) {
 
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= config.minPhilosophyScore &&
-        iv.marginOfSafety >= config.minMarginOfSafety
+        philosophy.total >= effectiveMinScore &&
+        iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
         tradeResults.push({
@@ -174,6 +211,9 @@ export async function POST(request: NextRequest) {
           openPositionCount: openCount,
           maxPositions: config.maxPositions ?? 15,
           existingPositionValue: existingValue,
+          deployedCapital,
+          minCashReservePct: effectiveCashReserve,
+          avgCostBasis: existing?.avgCostBasis,
         })
 
         if (!allocation.canAllocate) {
@@ -248,7 +288,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Step 3: Check sell signals on open positions ──────────────────────────
+  // ── Step 3: Sell check on open positions ────────────────────────────────
   const openPositions = await prisma.paperPortfolioItem.findMany({
     where: { isOpen: true },
     include: { stock: true },
@@ -258,7 +298,14 @@ export async function POST(request: NextRequest) {
   for (const pos of openPositions) {
     try {
       const f = await getCompleteFundamentals(pos.stock.ticker)
-      const posIv = calculateIntrinsicValue(f, f.sharesOutstanding)
+      // Inject treasury yield so sell scorer can factor in OE spread
+      if (macro?.treasury10yr) {
+        f.treasuryYield10yr = macro.treasury10yr
+        if (f.ownerEarningsYield !== undefined) {
+          f.ownerEarningsSpread = f.ownerEarningsYield - macro.treasury10yr
+        }
+      }
+      const posIv = calculateIntrinsicValue(f, f.sharesOutstanding, discountRate)
       const posNews = await getTickerNews(pos.stock.ticker).catch(() => undefined)
       const sellSignal = scoreSellDecision(f, posIv, posNews, pos.mosAtPurchase ?? undefined)
 
@@ -298,6 +345,15 @@ export async function POST(request: NextRequest) {
     ranAt: new Date().toISOString(),
     mode: config.mode,
     scanDurationMs: Date.now() - scanStart,
+    // Macro context snapshot — same as run/route.ts for consistency
+    macro: macro ? {
+      sp500Cape: macro.sp500Cape,
+      marketTemperature: macro.marketTemperature,
+      treasury10yr: (macro.treasury10yr * 100).toFixed(2) + '%',
+      excessEarningsYield: (macro.excessEarningsYield * 100).toFixed(2) + '%',
+      effectiveMinScore,
+      effectiveCashReservePct: effectiveCashReserve,
+    } : null,
     // Scan phase
     candidatesScanned: toAnalyse.length,
     newlyPromoted: promoted,
@@ -306,8 +362,11 @@ export async function POST(request: NextRequest) {
     buys: tradeResults.filter(r => r.action.includes('BUY')).length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
+    capitalDeployed: tradeResults.filter(r => r.action.includes('BUY')).reduce((s: number, r: any) => s + (r.dollarAmount ?? 0), 0),
     results: tradeResults,
-    sells: sellResults.length, sellResults,
+    // Sell phase
+    sells: sellResults.length,
+    sellResults,
   }
 
   await Promise.all([
@@ -320,7 +379,6 @@ export async function POST(request: NextRequest) {
     data: { lastRunAt: new Date(), lastRunResult: summary },
   })
 
-  // Snapshot portfolio for performance tracking
   try {
     await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/performance`, { method: 'POST' })
   } catch { /* best effort */ }
