@@ -156,9 +156,13 @@ export function calculateIntrinsicValue(
   const price = fundamentals.price
 
   // For cyclical businesses, use normalized EPS in the Graham Number
-  const epsForGraham = fundamentals.isCyclical && fundamentals.normalizedEps
-    ? fundamentals.normalizedEps
-    : fundamentals.eps
+  // Prefer Shiller EPS (10-year real average) over single-year trailing EPS
+  const shillerOrNormalizedEps =
+    fundamentals.isCyclical && fundamentals.normalizedEps
+      ? fundamentals.normalizedEps
+      : (fundamentals.shillerEps ?? fundamentals.eps)
+
+  const epsForGraham = shillerOrNormalizedEps
 
   let grahamNumber: number | undefined
   if (epsForGraham && fundamentals.bookValuePerShare) {
@@ -170,24 +174,24 @@ export function calculateIntrinsicValue(
     | undefined
 
   const ownerEarnings = fundamentals.ownerEarnings
+  let growthRate = 0.05
+
   if (ownerEarnings && ownerEarnings > 0 && sharesOutstanding && sharesOutstanding > 0) {
     const ownerEarningsPerShare = ownerEarnings / sharesOutstanding
-    const growthRate = fundamentals.epsHistory
+    growthRate = fundamentals.epsHistory
       ? estimateGrowthRate(fundamentals.epsHistory)
       : 0.05
 
     dcfResult = calculateDCF({
       ownerEarnings: ownerEarningsPerShare,
       growthRate,
-      discountRate,  // passed from caller (autopilot config) or defaults to 0.10
+      discountRate,
     })
   }
 
   // Composite weighting — sector-aware
   let intrinsicValue: number
   if (grahamNumber && dcfResult) {
-    // Capital-light businesses: book value reflects little of earning power → 80% DCF
-    // Traditional businesses: Graham Number is more meaningful → 60% DCF
     const dcfWeight = isCapitalLight(fundamentals.sector) ? 0.80 : 0.60
     const gnWeight  = 1 - dcfWeight
     intrinsicValue = grahamNumber * gnWeight + dcfResult.dcfValue * dcfWeight
@@ -207,6 +211,36 @@ export function calculateIntrinsicValue(
   const marginOfSafety =
     intrinsicValue > 0 ? ((intrinsicValue - price) / intrinsicValue) * 100 : 0
 
+  // ─── Buffett's 10-year expected CAGR ──────────────────────────────────────────
+  // "I don't look to jump over 7-foot bars; I look around for 1-foot bars that
+  //  I can step over." — Buffett. This answers: what annual return am I locking in?
+  //
+  // Formula: [(EPS_10yr × exit_PE) / current_price]^(1/10) − 1
+  // Exit P/E: conservative mean-reversion toward 15. High P/E stocks face compression.
+  let expectedCagr10yr: number | undefined
+  const baseEps = fundamentals.shillerEps ?? fundamentals.eps
+  if (baseEps && baseEps > 0 && price > 0) {
+    const eps10 = baseEps * Math.pow(1 + growthRate, 10)
+    const currentPE = fundamentals.pe ?? 15
+    // Exit P/E: regress toward 15 (long-run market mean) — be conservative
+    const exitPE = Math.max(10,
+      currentPE > 30 ? 15 :
+      currentPE > 20 ? currentPE * 0.75 :
+      currentPE > 15 ? currentPE * 0.90 : currentPE
+    )
+    const projectedPrice = eps10 * exitPE
+    const rawCagr = Math.pow(projectedPrice / price, 1 / 10) - 1
+    expectedCagr10yr = Math.max(-0.25, Math.min(0.35, rawCagr))
+  }
+
+  // ─── Shiller mean-reversion price target ─────────────────────────────────────
+  // Where would the stock trade if its CAPE reverted to the long-run fair value of 20×?
+  // This is a 10-year anchor, not a near-term target.
+  const shillerCapePriceTarget =
+    fundamentals.shillerEps && fundamentals.shillerEps > 0
+      ? fundamentals.shillerEps * 20   // Shiller's long-run fair CAPE ≈ 20
+      : undefined
+
   return {
     grahamNumber,
     dcfValue: dcfResult?.dcfValue,
@@ -218,5 +252,7 @@ export function calculateIntrinsicValue(
     growthRateUsed: dcfResult?.growthRateUsed,
     discountRateUsed: dcfResult?.discountRateUsed,
     terminalGrowth: dcfResult?.terminalGrowth,
+    expectedCagr10yr,
+    shillerCapePriceTarget,
   }
 }

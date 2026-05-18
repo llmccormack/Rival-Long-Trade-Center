@@ -53,6 +53,28 @@ export interface StockFundamentals {
   normalizedEps?: number             // average EPS over cycle (used when isCyclical)
   isCyclical?: boolean               // coeff of variation of EPS > 0.4
 
+  // Shiller CAPE (per-stock)
+  shillerEps?: number                // 10-year CPI-adjusted avg EPS (Shiller denominator)
+  capeRatio?: number                 // price / shillerEps — stock-level CAPE
+
+  // NCAV / Net-Net screen (Graham's deepest value method)
+  totalLiabilities?: number          // total liabilities (for NCAV)
+  ncav?: number                      // current assets − total liabilities
+  ncavPerShare?: number              // NCAV / shares outstanding
+  isNetNet?: boolean                 // price < 0.67 × ncavPerShare (Graham two-thirds rule)
+
+  // Management capital allocation quality
+  shareCountCagr5yr?: number         // 5-yr CAGR of shares out (negative = buybacks)
+  isDiluting?: boolean               // shareCountCagr5yr > 1% — management diluting holders
+
+  // Business quality tier (drives sell threshold)
+  businessTier?: BusinessTier
+
+  // Owner earnings yield vs treasury spread (Buffett's equity-bond comparison)
+  ownerEarningsYield?: number        // owner earnings per share / price (decimal)
+  treasuryYield10yr?: number         // injected from macro context (decimal, e.g. 0.045)
+  ownerEarningsSpread?: number       // ownerEarningsYield − treasuryYield10yr
+
   // Dividends
   dividendPerShare?: number
   dividendYield?: number
@@ -65,7 +87,12 @@ export interface StockFundamentals {
   bookValueHistory?: YearlyValue[]
   operatingMarginHistory?: YearlyValue[]
   roicHistory?: YearlyValue[]
+  sharesHistory?: YearlyValue[]      // for share count trend analysis
 }
+
+// Business quality tier — drives sell threshold and conviction ceiling
+// Buffett: wonderful companies warrant infinite patience; mediocre ones should be sold at par
+export type BusinessTier = 'wonderful' | 'good' | 'adequate' | 'mediocre'
 
 export interface YearlyValue {
   year: number
@@ -103,6 +130,9 @@ export interface IntrinsicValueResult {
   growthRateUsed?: number
   discountRateUsed?: number
   terminalGrowth?: number
+  // Shiller / forward-looking
+  expectedCagr10yr?: number          // Buffett's question: what return am I locking in?
+  shillerCapePriceTarget?: number    // fair value at Shiller's 20× long-run CAPE
 }
 
 export interface ScreenedStock {

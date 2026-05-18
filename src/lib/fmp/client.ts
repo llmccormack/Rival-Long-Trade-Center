@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios'
 import type { StockFundamentals, YearlyValue } from '@/types'
 import { detectCyclicality, normalizeEps } from '@/lib/graham/intrinsic-value'
+import { classifyBusinessQuality } from '@/lib/graham/business-quality'
 
 const BASE_URL = 'https://financialmodelingprep.com/api/v3'
 
@@ -104,6 +105,8 @@ interface FMPIncomeStatement {
   eps: number
   epsdiluted: number
   dividendPerShareTTM?: number
+  weightedAverageShsOut?: number      // basic shares outstanding (for share count trend)
+  weightedAverageShsOutDil?: number   // diluted shares
 }
 
 export async function getIncomeStatements(ticker: string, limit = 10): Promise<FMPIncomeStatement[]> {
@@ -493,6 +496,56 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     .filter((v) => !isNaN(v.year) && v.value != null)
     .reverse()
 
+  // ─── Shiller CAPE (per-stock) ────────────────────────────────────────────────
+  // 10-year average EPS, CPI-adjusted to today's dollars at 3%/yr.
+  // Shiller's insight: single-year EPS is dominated by cycle position. The
+  // 10-year real average removes the cycle and exposes long-run earning power.
+  const currentYear = new Date().getFullYear()
+  const shillerEpsData = epsHistory.filter(v => v.value > 0).slice(-10)
+  const shillerEps: number | undefined = shillerEpsData.length >= 5
+    ? shillerEpsData.reduce((s, v) => s + v.value * Math.pow(1.03, currentYear - v.year), 0) / shillerEpsData.length
+    : undefined
+  const capeRatio = shillerEps && shillerEps > 0 ? price / shillerEps : undefined
+
+  // ─── NCAV (Net-Net screen) ────────────────────────────────────────────────────
+  // Graham's most reliable deep-value method. NCAV = current assets - ALL liabilities.
+  // When price < 0.67 × NCAV/share, the market is valuing the operating business at
+  // negative value — you're literally buying a dollar for 67 cents.
+  // Studies show ~20% annual returns using this method (Oppenheimer, Greenblatt).
+  const ncav = latest.balance
+    ? latest.balance.totalCurrentAssets - latest.balance.totalLiabilities
+    : undefined
+  const ncavPerShare = ncav !== undefined && shares > 0 ? ncav / shares : undefined
+  const isNetNet = ncavPerShare !== undefined && price > 0 && price < ncavPerShare * 0.67
+
+  // ─── Share count trend ────────────────────────────────────────────────────────
+  // Negative CAGR = buybacks (management returning capital) → positive signal
+  // Positive CAGR = dilution (management printing shares) → penalizes per-share returns
+  const sharesHistory: YearlyValue[] = incomeStmts
+    .filter(s => (s.weightedAverageShsOut ?? 0) > 0)
+    .map(s => ({ year: parseInt(s.calendarYear), value: s.weightedAverageShsOut! }))
+    .filter(v => !isNaN(v.year))
+    .reverse()
+
+  const shareCountCagr5yr: number | undefined = (() => {
+    const sorted = [...sharesHistory].sort((a, b) => a.year - b.year).slice(-6)
+    if (sorted.length < 4) return undefined
+    const first = sorted[0].value
+    const last  = sorted[sorted.length - 1].value
+    const years = sorted[sorted.length - 1].year - sorted[0].year
+    if (years <= 0 || first <= 0) return undefined
+    return Math.pow(last / first, 1 / years) - 1
+  })()
+  const isDiluting = shareCountCagr5yr !== undefined && shareCountCagr5yr > 0.01
+
+  // ─── Owner earnings yield ─────────────────────────────────────────────────────
+  // Buffett's equity-bond comparison: owner earnings yield vs 10Y treasury.
+  // When OE yield > treasury + 3%, equities are cheap on an absolute basis.
+  const ownerEarningsYield =
+    ownerEarnings && shares > 0 && price > 0
+      ? ownerEarnings / shares / price
+      : undefined
+
   const dividendYears = new Set(dividends.map((d) => new Date(d.date).getFullYear())).size
 
   const dividendHistory: YearlyValue[] = dividends
@@ -563,11 +616,33 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     bookValueHistory,
     operatingMarginHistory: opMarginHistory,
     roicHistory,
+    sharesHistory,
 
     // FIX #9: Cyclical businesses need normalized earnings to avoid peak-cycle traps
     isCyclical: epsHistory.length >= 5 ? detectCyclicality(epsHistory) : false,
     normalizedEps: epsHistory.length >= 5 ? normalizeEps(epsHistory) : undefined,
+
+    // Shiller
+    shillerEps,
+    capeRatio,
+
+    // NCAV / net-net
+    totalLiabilities: latest.balance?.totalLiabilities,
+    ncav,
+    ncavPerShare,
+    isNetNet,
+
+    // Capital allocation quality
+    shareCountCagr5yr,
+    isDiluting,
+
+    // Yield signals
+    ownerEarningsYield,
+    // treasuryYield10yr and ownerEarningsSpread injected by autopilot from MacroContext
   }
+
+  // Business quality tier — computed last as it reads fields assembled above
+  result.businessTier = classifyBusinessQuality(result).tier
 
   cache.set(cacheKey, result, FUNDAMENTALS_TTL)
   return result

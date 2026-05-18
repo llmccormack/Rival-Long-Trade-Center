@@ -5,6 +5,7 @@ import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
+import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 
 // Called by Railway cron: POST /api/autopilot/run
 // Also callable manually from the Autopilot settings page.
@@ -35,6 +36,18 @@ export async function POST(request: NextRequest) {
     include: { stock: true },
   })
 
+  // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
+  // Fetch once per run — adjusts cash reserve and min score based on S&P 500 CAPE.
+  // Buffett sat on $325B cash in 2024 (CAPE ~34). In 2009 (CAPE ~13) he was buying.
+  // This makes the autopilot behave like Buffett: aggressive in fear, patient in greed.
+  const macro = await getMarketContext()
+  const macroAudit = macro ? [formatMarketContext(macro)] : []
+
+  // Apply macro adjustments on top of user config
+  const effectiveMinScore     = (config.minPhilosophyScore ?? 55) + (macro?.minScoreAdj ?? 0)
+  const effectiveMinMos       = config.minMarginOfSafety ?? 30
+  const effectiveCashReserve  = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
+
   // Compute total deployed capital once — used for cash reserve floor check each iteration
   const openPaperPositions = await prisma.paperPortfolioItem.findMany({
     where: { isOpen: true },
@@ -45,11 +58,18 @@ export async function POST(request: NextRequest) {
   )
 
   const discountRate = ((config.discountRate ?? 10) / 100)
-  const minCashReservePct = config.minCashReservePct ?? 15
+  const minCashReservePct = effectiveCashReserve
 
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
+      // Inject treasury yield from macro context so scorer can compute OE spread
+      if (macro?.treasury10yr) {
+        fundamentals.treasuryYield10yr = macro.treasury10yr
+        if (fundamentals.ownerEarningsYield !== undefined) {
+          fundamentals.ownerEarningsSpread = fundamentals.ownerEarningsYield - macro.treasury10yr
+        }
+      }
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
@@ -57,8 +77,8 @@ export async function POST(request: NextRequest) {
 
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= config.minPhilosophyScore &&
-        iv.marginOfSafety >= config.minMarginOfSafety
+        philosophy.total >= effectiveMinScore &&
+        iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
         results.push({
@@ -187,6 +207,15 @@ export async function POST(request: NextRequest) {
     skipped: results.filter(r => r.action === 'SKIP').length,
     vetoed: results.filter(r => r.action === 'VETOED').length,
     capitalDeployed: results.filter(r => r.action.includes('BUY')).reduce((s, r) => s + (r.dollarAmount ?? 0), 0),
+    // Macro context snapshot — shows market temperature at time of run
+    macro: macro ? {
+      sp500Cape: macro.sp500Cape,
+      marketTemperature: macro.marketTemperature,
+      treasury10yr: (macro.treasury10yr * 100).toFixed(2) + '%',
+      excessEarningsYield: (macro.excessEarningsYield * 100).toFixed(2) + '%',
+      effectiveMinScore,
+      effectiveCashReservePct: effectiveCashReserve,
+    } : null,
     results,
   }
 

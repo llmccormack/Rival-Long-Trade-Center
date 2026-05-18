@@ -405,6 +405,126 @@ export function scoreBuyDecision(
     }
   }
 
+  // ── Graham Net-Net (NCAV) ─────────────────────────────────────────────────
+  // Graham's most reliable deep-value method — statistically dominant returns.
+  // When price < 67% of NCAV/share, the market prices the operating business
+  // at negative value. This has been the single best-performing mechanical screen
+  // in the historical academic literature (Oppenheimer 1986, Greenblatt 2006).
+
+  if (fundamentals.ncavPerShare !== undefined && fundamentals.ncavPerShare > 0) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_financial_strength')!
+    if (p) {
+      const ncavRatio = fundamentals.price / fundamentals.ncavPerShare
+      const ncavScore = ncavRatio <= 0.67 ? 1 : ncavRatio <= 1.0 ? 0.7 : ncavRatio <= 1.5 ? 0.4 : 0.1
+      triggered.push({ principle: p, score: ncavScore, note: `NCAV/share: $${fundamentals.ncavPerShare.toFixed(2)} | Price/NCAV: ${ncavRatio.toFixed(2)}× (Graham net-net: ≤0.67)` })
+      if (fundamentals.isNetNet) {
+        audit.push(`PASS: PRICE IS BELOW 67% OF NCAV — a genuine Graham net-net. Price/NCAV = ${ncavRatio.toFixed(2)}×. ` +
+          `Academic studies show these generate ~20% annual returns mechanically. ` +
+          `You are buying current assets (cash, receivables, inventory) at a discount to their liquidation value. ` +
+          `(Benjamin Graham, Security Analysis Ch.26)`)
+      } else if (ncavRatio <= 1.0) {
+        audit.push(`PASS: Price below NCAV/share ($${fundamentals.ncavPerShare.toFixed(2)}) — strong asset protection. ` +
+          `Not a full net-net (need <67%) but meaningful liquidation support. (Graham)`)
+      }
+    }
+  }
+
+  // ── Shiller Stock-Level CAPE ──────────────────────────────────────────────
+  // Individual stock CAPE using 10-year real average EPS.
+  // Valuation relative to the full earnings cycle is more reliable than trailing P/E.
+
+  if (fundamentals.capeRatio !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_moderate_pe')!
+    if (p) {
+      const capeScore = fundamentals.capeRatio <= 10 ? 1 : fundamentals.capeRatio <= 15 ? 0.85 :
+        fundamentals.capeRatio <= 20 ? 0.65 : fundamentals.capeRatio <= 25 ? 0.4 : 0.1
+      triggered.push({ principle: p, score: capeScore, note: `Shiller CAPE (stock-level): ${fundamentals.capeRatio.toFixed(1)}× (10-yr real avg EPS; fair value ≈ 15-20×)` })
+      if (fundamentals.capeRatio <= 15) {
+        audit.push(`PASS: Stock-level CAPE of ${fundamentals.capeRatio.toFixed(1)}× is below long-run fair value. ` +
+          `You are buying at a discount to the full earnings cycle, not just a peak year. (Shiller)`)
+      } else if (fundamentals.capeRatio > 30) {
+        audit.push(`WARN: Stock-level CAPE of ${fundamentals.capeRatio.toFixed(1)}× — ` +
+          `paying a significant premium to the 10-year real earnings average. ` +
+          `Shiller: high CAPE predicts low 10-year returns with statistical reliability. (Robert Shiller, Irrational Exuberance)`)
+      }
+    }
+  }
+
+  // ── Buffett 10-Year Expected CAGR ─────────────────────────────────────────
+  // The most honest valuation framing: at today's price, what annual return
+  // am I locking in? Buffett's hurdle rate is ~10%. Below 7% = not worth the risk.
+
+  if (iv.expectedCagr10yr !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c20_margin_of_safety')!
+    if (p) {
+      const cagr = iv.expectedCagr10yr
+      const cagrScore = cagr >= 0.15 ? 1 : cagr >= 0.12 ? 0.85 : cagr >= 0.10 ? 0.70 :
+        cagr >= 0.07 ? 0.45 : cagr >= 0.04 ? 0.20 : 0
+      triggered.push({ principle: p, score: cagrScore, note: `10-yr expected CAGR: ${(cagr * 100).toFixed(1)}% (Buffett hurdle: ≥10%)` })
+      if (cagr >= 0.15) {
+        audit.push(`PASS: 10-year expected CAGR of ${(cagr * 100).toFixed(1)}% — exceptional. ` +
+          `At Buffett's hurdle of 10%, this is a high-conviction opportunity. ` +
+          `Assumes EPS grows at ${((iv.growthRateUsed ?? 0.05) * 100).toFixed(1)}%/yr with exit P/E mean-reversion. (Buffett)`)
+      } else if (cagr >= 0.10) {
+        audit.push(`PASS: 10-year expected CAGR of ${(cagr * 100).toFixed(1)}% — meets Buffett's 10% hurdle rate. (Buffett)`)
+      } else if (cagr < 0.07) {
+        audit.push(`FAIL: 10-year expected CAGR of ${(cagr * 100).toFixed(1)}% — below the risk-free rate adjusted for equity risk premium. ` +
+          `At this price, equities don't compensate for the uncertainty of ownership. (Buffett)`)
+      }
+    }
+  }
+
+  // ── Share Count Trend (Capital Allocation Quality) ────────────────────────
+  // Whether management creates or destroys per-share value through capital allocation.
+  // Buybacks at below-IV: per-share value compounds faster than earnings alone.
+  // Dilution: every share issued at low prices is a permanent transfer from holders to issuers.
+
+  if (fundamentals.shareCountCagr5yr !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'bl_1990_moat_identification')!
+    if (p) {
+      const cagr = fundamentals.shareCountCagr5yr
+      const shareScore = cagr <= -0.03 ? 1 : cagr <= -0.01 ? 0.85 : cagr <= 0.01 ? 0.65 :
+        cagr <= 0.03 ? 0.30 : 0.05
+      triggered.push({ principle: p, score: shareScore, note: `Share count CAGR (5yr): ${(cagr * 100).toFixed(1)}%/yr (negative = buybacks)` })
+      if (cagr <= -0.02) {
+        audit.push(`PASS: Shares outstanding shrinking ${Math.abs(cagr * 100).toFixed(1)}%/yr — ` +
+          `management buying back stock at disciplined prices. Every share retired increases remaining holders' per-share earnings. ` +
+          `Buffett: "The best investment a company can make is often its own stock, if bought intelligently." (Buffett)`)
+      } else if (cagr >= 0.03) {
+        audit.push(`FAIL: Share count growing ${(cagr * 100).toFixed(1)}%/yr — persistent dilution. ` +
+          `Management is transferring value from existing holders to new issuances (employees, acquisitions). ` +
+          `EPS growth overstates business performance; per-share compounding is impaired. (Buffett 1984: "The Superinvestors")`)
+      }
+    }
+  }
+
+  // ── Owner Earnings Yield vs Treasury ─────────────────────────────────────
+  // Buffett's 1977 Fortune article: equities are long-duration bonds with a variable coupon.
+  // When owner earnings yield > treasury + 3%, equities are cheap on an absolute basis.
+  // This is the most direct answer to: "Should I buy stocks or bonds?"
+
+  if (fundamentals.ownerEarningsYield !== undefined && fundamentals.treasuryYield10yr !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'bl_1977_owner_earnings')!
+    if (p) {
+      const oeYield   = fundamentals.ownerEarningsYield
+      const tsy       = fundamentals.treasuryYield10yr
+      const spread    = oeYield - tsy
+      const spreadScore = spread >= 0.07 ? 1 : spread >= 0.05 ? 0.85 : spread >= 0.03 ? 0.65 :
+        spread >= 0.01 ? 0.40 : spread >= 0 ? 0.20 : 0.05
+      triggered.push({ principle: p, score: spreadScore,
+        note: `OE yield: ${(oeYield * 100).toFixed(1)}% | Treasury: ${(tsy * 100).toFixed(1)}% | Spread: ${(spread * 100).toFixed(1)}%` })
+      if (spread >= 0.05) {
+        audit.push(`PASS: Owner earnings yield ${(oeYield * 100).toFixed(1)}% vs 10Y treasury ${(tsy * 100).toFixed(1)}% — ` +
+          `${(spread * 100).toFixed(1)}% spread. Buffett 1977: ` +
+          `"At this spread, equities are dramatically superior to bonds on a risk-adjusted basis." Screaming buy on absolute value. (Buffett, Fortune 1977)`)
+      } else if (spread <= 0) {
+        audit.push(`WARN: Owner earnings yield (${(oeYield * 100).toFixed(1)}%) is BELOW the 10-year treasury (${(tsy * 100).toFixed(1)}%). ` +
+          `On an absolute yield basis, fixed income currently pays more than this equity. ` +
+          `Buffett: "When bonds yield more than stocks, the logical investor buys bonds." (Buffett, 1999 speech)`)
+      }
+    }
+  }
+
   // ── Howard Marks: Risk Control & Sentiment ────────────────────────────────
 
   if (news && news.sentiment !== undefined) {
