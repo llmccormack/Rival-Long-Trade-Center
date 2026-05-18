@@ -164,7 +164,7 @@ model PaperPortfolioItem {
 // Persists autopilot settings server-side (mode, thresholds)
 model AutopilotConfig {
   id                String   @id @default("singleton")
-  isEnabled         Boolean  @default(false)
+  isEnabled         Boolean  @default(true)
   mode              String   @default("paper")   // "paper" | "live"
   minPhilosophyScore Int     @default(55)
   minMarginOfSafety  Float   @default(30)

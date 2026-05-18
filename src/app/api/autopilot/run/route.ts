@@ -25,9 +25,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
-  if (!config.isEnabled) {
-    return Response.json({ skipped: true, reason: 'Autopilot is disabled' })
-  }
+  // isEnabled is informational only — cron always runs regardless
 
   const results: any[] = []
 
