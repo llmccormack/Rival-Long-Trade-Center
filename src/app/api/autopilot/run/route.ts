@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
-import { getCompleteFundamentals, getTickerNews } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getInsiderTransactions } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
@@ -48,14 +48,22 @@ export async function POST(request: NextRequest) {
   const effectiveMinMos       = config.minMarginOfSafety ?? 30
   const effectiveCashReserve  = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
 
-  // Compute total deployed capital once — used for cash reserve floor check each iteration
+  // Compute deployed capital and sector exposure — used for cash reserve floor and sector caps
   const openPaperPositions = await prisma.paperPortfolioItem.findMany({
     where: { isOpen: true },
-    select: { shares: true, currentPrice: true, avgCostBasis: true },
+    include: { stock: true },
   })
-  const deployedCapital = openPaperPositions.reduce(
-    (s, p) => s + p.shares * (p.currentPrice ?? p.avgCostBasis), 0
-  )
+  let deployedCapital = 0
+  const sectorExposure: Record<string, number> = {}
+  for (const p of openPaperPositions) {
+    const val = p.shares * (p.currentPrice ?? p.avgCostBasis)
+    deployedCapital += val
+    const sector = (p as any).stock?.sector
+    if (sector) {
+      sectorExposure[sector] = (sectorExposure[sector] ?? 0) + val
+    }
+  }
+  const maxSectorPct = config.maxSectorPct ?? 30
 
   const discountRate = ((config.discountRate ?? 10) / 100)
   const minCashReservePct = effectiveCashReserve
@@ -73,7 +81,8 @@ export async function POST(request: NextRequest) {
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
-      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news)
+      const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
+      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
 
       const passed =
         philosophy.vetoedBy.length === 0 &&
@@ -127,6 +136,9 @@ export async function POST(request: NextRequest) {
           deployedCapital,
           minCashReservePct,
           avgCostBasis: existing?.avgCostBasis,
+          stockSector: fundamentals.sector,
+          sectorExposure,
+          maxSectorPct,
         })
 
         if (!allocation.canAllocate) {
@@ -161,6 +173,12 @@ export async function POST(request: NextRequest) {
             },
           })
         }
+
+        // Keep sector exposure and deployed capital accurate for subsequent iterations
+        if (fundamentals.sector) {
+          sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
+        }
+        deployedCapital += allocation.dollarAmount
 
         await prisma.alert.create({
           data: {

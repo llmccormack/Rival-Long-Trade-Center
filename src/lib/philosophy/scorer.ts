@@ -3,7 +3,7 @@
 // No trade executes without a full philosophy audit trail.
 
 import { ALL_PRINCIPLES, SELL_PRINCIPLES, type Principle, type Category } from './principles'
-import type { StockFundamentals } from '@/types'
+import type { StockFundamentals, InsiderTransaction } from '@/types'
 import type { GrahamCriteria } from '@/types'
 import type { IntrinsicValueResult } from '@/types'
 import type { NewsAnalysis } from '@/lib/fmp/client'
@@ -24,7 +24,7 @@ export interface TriggeredPrinciple {
   note: string
 }
 
-export type ConvictionLevel = 'strong_buy' | 'buy' | 'watchlist' | 'avoid' | 'sell' | 'hold'
+export type ConvictionLevel = 'exceptional' | 'strong_buy' | 'buy' | 'watchlist' | 'avoid' | 'sell' | 'hold'
 export type TradeSignal = 'BUY' | 'ADD' | 'HOLD' | 'REDUCE' | 'SELL' | 'PASS'
 
 // ─── Buy Scorer ───────────────────────────────────────────────────────────────
@@ -33,7 +33,8 @@ export function scoreBuyDecision(
   fundamentals: StockFundamentals,
   criteria: GrahamCriteria,
   iv: IntrinsicValueResult,
-  news?: NewsAnalysis
+  news?: NewsAnalysis,
+  insider?: InsiderTransaction[]
 ): PhilosophyScore {
   const triggered: TriggeredPrinciple[] = []
   const vetoed: Principle[] = []
@@ -525,6 +526,61 @@ export function scoreBuyDecision(
     }
   }
 
+  // ── Insider Transactions (SEC Form 4) ─────────────────────────────────────
+  // Open-market purchases by directors/officers with personal money are one of
+  // the strongest return predictors in the literature (Seyhun 1998, Lakonishok 2001).
+  // These people have legal inside knowledge of business trajectory. They don't
+  // buy for diversification — they buy because they think it's cheap.
+  // Selling is weaker signal (taxes, diversification) but cluster-selling is a warning.
+
+  if (insider && insider.length > 0) {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 90)  // look at last 90 days
+
+    const recent = insider.filter(t => {
+      if (!t.transactionDate) return false
+      return new Date(t.transactionDate) >= cutoff
+    })
+
+    const recentBuys  = recent.filter(t => t.transactionType?.startsWith('P'))
+    const recentSells = recent.filter(t => t.transactionType?.startsWith('S'))
+    const distinctBuyers = new Set(recentBuys.map(t => t.reportingName)).size
+
+    const p = ALL_PRINCIPLES.find(p => p.id === 'bl_1990_moat_identification')!
+    if (p) {
+      if (recentBuys.length >= 2 || distinctBuyers >= 2) {
+        // Multiple insiders buying — very strong signal
+        const insiderScore = Math.min(1, 0.5 + recentBuys.length * 0.1)
+        triggered.push({ principle: p, score: insiderScore,
+          note: `Insider buying: ${recentBuys.length} purchases by ${distinctBuyers} insiders (90d)` })
+        audit.push(
+          `PASS: ${recentBuys.length} open-market insider purchases in 90 days by ${distinctBuyers} distinct insiders. ` +
+          `Seyhun (1998): cluster insider buying predicts 6-12 month outperformance with high statistical confidence. ` +
+          `These people know the business better than anyone and are betting their own money.`
+        )
+      } else if (recentBuys.length === 1) {
+        triggered.push({ principle: p, score: 0.70,
+          note: `Insider buying: 1 purchase by ${recentBuys[0]?.reportingName ?? 'insider'} (90d)` })
+        audit.push(
+          `PASS: Insider purchase in last 90 days by ${recentBuys[0]?.reportingName ?? 'an insider'}. ` +
+          `Single purchase is a moderate positive signal — watch for follow-on buying.`
+        )
+      } else if (recentSells.length > 0 && recentBuys.length === 0) {
+        const distinctSellers = new Set(recentSells.map(t => t.reportingName)).size
+        if (distinctSellers >= 3 || recentSells.length >= 4) {
+          // Cluster selling with no offsetting buys — warning
+          triggered.push({ principle: p, score: 0.20,
+            note: `Insider selling: ${recentSells.length} sales by ${distinctSellers} insiders (90d), no buys` })
+          audit.push(
+            `WARN: ${recentSells.length} insider sales in 90 days by ${distinctSellers} distinct insiders with zero offsetting purchases. ` +
+            `Cluster selling without buying is a warning — may indicate insiders see headwinds. ` +
+            `Not a veto (selling has many benign explanations) but warrants caution.`
+          )
+        }
+      }
+    }
+  }
+
   // ── Howard Marks: Risk Control & Sentiment ────────────────────────────────
 
   if (news && news.sentiment !== undefined) {
@@ -590,6 +646,9 @@ function buildCategoryScores(triggered: TriggeredPrinciple[]): Record<Category, 
 }
 
 function scoreToConviction(score: number, mos: number, grahamPass: boolean): ConvictionLevel {
+  // Exceptional: rare, highest conviction — Buffett's "punch the card" moment
+  // Requires score ≥ 85 AND MOS ≥ 40% — both must be true simultaneously
+  if (score >= 85 && mos >= 40) return 'exceptional'
   if (score >= 75 && mos >= 30 && grahamPass) return 'strong_buy'
   if (score >= 60 && mos >= 30) return 'buy'
   if (score >= 50 && mos >= 10) return 'watchlist'
@@ -599,11 +658,12 @@ function scoreToConviction(score: number, mos: number, grahamPass: boolean): Con
 
 function convictionToSignal(conviction: ConvictionLevel): TradeSignal {
   switch (conviction) {
-    case 'strong_buy': return 'BUY'
-    case 'buy': return 'BUY'
-    case 'watchlist': return 'PASS'
-    case 'hold': return 'HOLD'
-    case 'avoid': return 'PASS'
-    case 'sell': return 'SELL'
+    case 'exceptional': return 'BUY'
+    case 'strong_buy':  return 'BUY'
+    case 'buy':         return 'BUY'
+    case 'watchlist':   return 'PASS'
+    case 'hold':        return 'HOLD'
+    case 'avoid':       return 'PASS'
+    case 'sell':        return 'SELL'
   }
 }

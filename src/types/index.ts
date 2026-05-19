@@ -227,6 +227,14 @@ export interface ApiError {
   status?: number
 }
 
+export interface InsiderTransaction {
+  reportingName?: string
+  transactionType?: string   // 'P' = open-market purchase, 'S' = sale
+  securitiesTransacted?: number
+  price?: number
+  transactionDate?: string
+}
+
 export type MetricTrend = 'up' | 'down' | 'flat'
 
 export interface MetricCard {

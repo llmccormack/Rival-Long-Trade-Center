@@ -1,21 +1,20 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
-import { getMarketCandidates } from '@/lib/yahoo/screener'
-import { getCompleteFundamentals, getTickerNews, getEarningsCalendar } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
-import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
+import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
 
 // POST /api/autopilot/full-run
-// Full pipeline: scan market → auto-populate watchlist → execute trades → review positions
-// Step 1: Yahoo pre-screen + FMP scoring → promote qualifying stocks to watchlist
-// Step 2: Run autopilot against full watchlist (macro-adjusted thresholds)
-// Step 3: Sell check on open positions
+// Investor-style autopilot: sell then buy, watchlist only.
+// Buffett doesn't screen the market — he evaluates businesses he already understands.
+// Step 1: Sell check on all open positions.
+// Step 2: Buy evaluation on all active watchlist items with sector concentration awareness.
 export async function POST(request: NextRequest) {
   const secret = request.headers.get('authorization')?.replace('Bearer ', '')
   if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
@@ -34,104 +33,131 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
-  // Fetch once per run — adjusts cash reserve and min score based on S&P 500 CAPE.
-  // All three phases (scan, trade, sell) use the same macro snapshot for consistency.
   const macro = await getMarketContext()
   const macroAudit = macro ? [formatMarketContext(macro)] : []
 
-  // Apply macro adjustments on top of user config
   const effectiveMinScore    = (config.minPhilosophyScore ?? 55) + (macro?.minScoreAdj ?? 0)
   const effectiveMinMos      = config.minMarginOfSafety ?? 30
   const effectiveCashReserve = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
   const discountRate         = (config.discountRate ?? 10) / 100
+  const maxSectorPct         = config.maxSectorPct ?? 30
 
-  // Deployed capital — needed for cash reserve floor check in allocator
-  const openPaperPositions = await prisma.paperPortfolioItem.findMany({
+  // ── Step 1: Sell check on all open positions ─────────────────────────────
+  const openPositions = await prisma.paperPortfolioItem.findMany({
     where: { isOpen: true },
-    select: { shares: true, currentPrice: true, avgCostBasis: true },
+    include: { stock: true },
   })
-  const deployedCapital = openPaperPositions.reduce(
-    (s, p) => s + p.shares * (p.currentPrice ?? p.avgCostBasis), 0
-  )
 
-  // ── Step 1: Market scan + watchlist population ───────────────────────────
-  const scanStart = Date.now()
-  const candidates = await getMarketCandidates({ maxPE: 18, maxPB: 2.0, minMarketCapM: 300 })
-  const toAnalyse = candidates.slice(0, 40)
+  const sellResults: any[] = []
 
-  const scanResults: any[] = []
-  const promoted: string[] = []
-
-  for (const candidate of toAnalyse) {
+  for (const pos of openPositions) {
     try {
-      const fundamentals = await getCompleteFundamentals(candidate.symbol)
-      // Inject treasury yield so scorer can compute OE spread during scan phase
+      const f = await getCompleteFundamentals(pos.stock.ticker)
       if (macro?.treasury10yr) {
-        fundamentals.treasuryYield10yr = macro.treasury10yr
-        if (fundamentals.ownerEarningsYield !== undefined) {
-          fundamentals.ownerEarningsSpread = fundamentals.ownerEarningsYield - macro.treasury10yr
+        f.treasuryYield10yr = macro.treasury10yr
+        if (f.ownerEarningsYield !== undefined) {
+          f.ownerEarningsSpread = f.ownerEarningsYield - macro.treasury10yr
         }
       }
-      const criteria = applyGrahamCriteria(fundamentals)
-      const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
-      const philosophy = scoreBuyDecision(fundamentals, criteria, iv)
+      const posIv = calculateIntrinsicValue(f, f.sharesOutstanding, discountRate)
+      const posNews = await getTickerNews(pos.stock.ticker).catch(() => undefined)
+      const sellSignal = scoreSellDecision(f, posIv, posNews, pos.mosAtPurchase ?? undefined)
 
-      scanResults.push({
-        ticker: candidate.symbol,
-        philosophyScore: philosophy.total,
-        signal: philosophy.signal,
-        mos: iv.marginOfSafety,
-        vetoCount: philosophy.vetoedBy.length,
-      })
+      if (posNews && posNews.hardVetoFlags.length > 0) {
+        await prisma.paperPortfolioItem.update({
+          where: { id: pos.id },
+          data: {
+            isOpen: false,
+            closedAt: new Date(),
+            closePrice: f.price,
+            closeReason: `News veto: ${posNews.hardVetoFlags[0]}`,
+            currentPrice: f.price,
+          },
+        })
+        await prisma.alert.create({
+          data: {
+            ticker: pos.stock.ticker,
+            type: 'fundamental_change',
+            message: `PAPER SELL (news veto): ${pos.stock.ticker} — "${posNews.hardVetoFlags[0]}"`,
+            severity: 'warning',
+          },
+        })
+        sellResults.push({ ticker: pos.stock.ticker, action: 'SOLD_NEWS_VETO', flag: posNews.hardVetoFlags[0], price: f.price })
+        await Promise.all([
+          sendVetoAlert({ ticker: pos.stock.ticker, reason: posNews.hardVetoFlags[0], isHeld: false }).catch(() => {}),
+          pushVetoAlert({ ticker: pos.stock.ticker, reason: posNews.hardVetoFlags[0], isHeld: false }).catch(() => {}),
+        ])
+        continue
+      }
 
-      // Auto-promote using macro-adjusted thresholds (not hard-coded 55/30)
-      if (
-        philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= effectiveMinScore &&
-        iv.marginOfSafety >= effectiveMinMos
-      ) {
-        const stock = await prisma.stock.upsert({
-          where: { ticker: candidate.symbol },
-          create: {
-            ticker: candidate.symbol,
-            name: fundamentals.name,
-            sector: fundamentals.sector,
-            industry: fundamentals.industry,
-            exchange: fundamentals.exchange,
+      if (sellSignal.shouldSell) {
+        await prisma.paperPortfolioItem.update({
+          where: { id: pos.id },
+          data: {
+            isOpen: false,
+            closedAt: new Date(),
+            closePrice: f.price,
+            closeReason: sellSignal.reason,
+            currentPrice: f.price,
           },
-          update: { name: fundamentals.name },
         })
-        await prisma.watchlistItem.upsert({
-          where: { stockId: stock.id },
-          create: {
-            stockId: stock.id,
-            targetPrice: iv.intrinsicValue * 0.7,
-            notes: `Auto-added by full-run scan. Score: ${philosophy.total}/100, MOS: ${iv.marginOfSafety.toFixed(1)}%`,
-            isActive: true,
+        await prisma.alert.create({
+          data: {
+            ticker: pos.stock.ticker,
+            type: 'paper_sell',
+            message: `PAPER SELL: ${pos.stock.ticker} @ $${f.price.toFixed(2)} — ${sellSignal.reason}`,
+            severity: sellSignal.urgency === 'immediate' ? 'danger' : 'warning',
           },
-          update: { isActive: true },
         })
-        promoted.push(candidate.symbol)
+        sellResults.push({ ticker: pos.stock.ticker, action: 'PAPER_SELL', reason: sellSignal.reason, urgency: sellSignal.urgency, price: f.price })
+        await Promise.all([
+          sendTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
+          pushTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
+          ...(sellSignal.vetoSell ? [
+            sendVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
+            pushVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
+          ] : []),
+        ])
+      } else {
+        await prisma.paperPortfolioItem.update({
+          where: { id: pos.id },
+          data: { currentPrice: f.price },
+        })
       }
 
       await new Promise(r => setTimeout(r, 200))
-    } catch {
-      // Skip tickers with no FMP data
+    } catch { /* skip */ }
+  }
+
+  // ── Step 2: Compute sector exposure from remaining open positions ─────────
+  // Re-fetch after sells so the buy phase works with accurate sector headroom.
+  const remainingPositions = await prisma.paperPortfolioItem.findMany({
+    where: { isOpen: true },
+    include: { stock: true },
+  })
+
+  const sectorExposure: Record<string, number> = {}
+  let deployedCapital = 0
+  for (const p of remainingPositions) {
+    const val = p.shares * (p.currentPrice ?? p.avgCostBasis)
+    deployedCapital += val
+    const sector = p.stock?.sector
+    if (sector) {
+      sectorExposure[sector] = (sectorExposure[sector] ?? 0) + val
     }
   }
 
-  // ── Step 2: Execute trades against full watchlist ────────────────────────
-  const tradeResults: any[] = []
-
+  // ── Step 2: Buy evaluation — watchlist only ───────────────────────────────
   const watchlist = await prisma.watchlistItem.findMany({
     where: { isActive: true },
     include: { stock: true },
   })
 
+  const tradeResults: any[] = []
+
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
-      // Inject treasury yield so scorer has OE spread data
       if (macro?.treasury10yr) {
         fundamentals.treasuryYield10yr = macro.treasury10yr
         if (fundamentals.ownerEarningsYield !== undefined) {
@@ -141,9 +167,10 @@ export async function POST(request: NextRequest) {
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
-      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news)
+      const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
+      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
 
-      // Skip if earnings within 21 days — don't buy into earnings uncertainty
+      // Skip if earnings within 21 days — don't buy into uncertainty
       const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
       const today = new Date()
       const earningsIn21Days = earningsEvents.some(e => {
@@ -214,6 +241,9 @@ export async function POST(request: NextRequest) {
           deployedCapital,
           minCashReservePct: effectiveCashReserve,
           avgCostBasis: existing?.avgCostBasis,
+          stockSector: fundamentals.sector,
+          sectorExposure,
+          maxSectorPct,
         })
 
         if (!allocation.canAllocate) {
@@ -249,11 +279,17 @@ export async function POST(request: NextRequest) {
           })
         }
 
+        // Update sector exposure for subsequent iterations in this run
+        if (fundamentals.sector) {
+          sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
+        }
+        deployedCapital += allocation.dollarAmount
+
         await prisma.alert.create({
           data: {
             ticker: item.stock.ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}%`,
+            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}`,
             severity: 'buy',
           },
         })
@@ -288,64 +324,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Step 3: Sell check on open positions ────────────────────────────────
-  const openPositions = await prisma.paperPortfolioItem.findMany({
-    where: { isOpen: true },
-    include: { stock: true },
-  })
-
-  const sellResults: any[] = []
-  for (const pos of openPositions) {
-    try {
-      const f = await getCompleteFundamentals(pos.stock.ticker)
-      // Inject treasury yield so sell scorer can factor in OE spread
-      if (macro?.treasury10yr) {
-        f.treasuryYield10yr = macro.treasury10yr
-        if (f.ownerEarningsYield !== undefined) {
-          f.ownerEarningsSpread = f.ownerEarningsYield - macro.treasury10yr
-        }
-      }
-      const posIv = calculateIntrinsicValue(f, f.sharesOutstanding, discountRate)
-      const posNews = await getTickerNews(pos.stock.ticker).catch(() => undefined)
-      const sellSignal = scoreSellDecision(f, posIv, posNews, pos.mosAtPurchase ?? undefined)
-
-      if (sellSignal.shouldSell) {
-        await prisma.paperPortfolioItem.update({
-          where: { id: pos.id },
-          data: {
-            isOpen: false,
-            closePrice: f.price,
-            closedAt: new Date(),
-            closeReason: sellSignal.reason,
-          },
-        })
-        await prisma.alert.create({
-          data: {
-            ticker: pos.stock.ticker,
-            type: 'paper_sell',
-            message: `PAPER SELL: ${pos.stock.ticker} @ $${f.price.toFixed(2)} — ${sellSignal.reason}`,
-            severity: sellSignal.urgency === 'immediate' ? 'danger' : 'warning',
-          },
-        })
-        sellResults.push({ ticker: pos.stock.ticker, action: 'PAPER_SELL', reason: sellSignal.reason, urgency: sellSignal.urgency, price: f.price })
-        await Promise.all([
-          sendTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
-          pushTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
-          ...(sellSignal.vetoSell ? [
-            sendVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
-            pushVetoAlert({ ticker: pos.stock.ticker, reason: sellSignal.reason, isHeld: true }).catch(() => {}),
-          ] : []),
-        ])
-      }
-      await new Promise(r => setTimeout(r, 200))
-    } catch { /* skip */ }
-  }
-
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
-    scanDurationMs: Date.now() - scanStart,
-    // Macro context snapshot — same as run/route.ts for consistency
     macro: macro ? {
       sp500Cape: macro.sp500Cape,
       marketTemperature: macro.marketTemperature,
@@ -354,24 +335,23 @@ export async function POST(request: NextRequest) {
       effectiveMinScore,
       effectiveCashReservePct: effectiveCashReserve,
     } : null,
-    // Scan phase
-    candidatesScanned: toAnalyse.length,
-    newlyPromoted: promoted,
-    // Trade phase
+    // Sell phase
+    positionsReviewed: openPositions.length,
+    sells: sellResults.filter(r => r.action === 'PAPER_SELL').length,
+    vetoSells: sellResults.filter(r => r.action === 'SOLD_NEWS_VETO').length,
+    sellResults,
+    // Buy phase
     watchlistScanned: watchlist.length,
-    buys: tradeResults.filter(r => r.action.includes('BUY')).length,
+    buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
-    capitalDeployed: tradeResults.filter(r => r.action.includes('BUY')).reduce((s: number, r: any) => s + (r.dollarAmount ?? 0), 0),
+    capitalDeployed: tradeResults.filter(r => r.action === 'PAPER_BUY').reduce((s: number, r: any) => s + (r.dollarAmount ?? 0), 0),
     results: tradeResults,
-    // Sell phase
-    sells: sellResults.length,
-    sellResults,
   }
 
   await Promise.all([
-    sendRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, skipped: summary.skipped, newWatchlist: summary.newlyPromoted, results: summary.results, mode: summary.mode }).catch(() => {}),
-    pushRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, newWatchlist: summary.newlyPromoted, mode: summary.mode }).catch(() => {}),
+    sendRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, skipped: summary.skipped, newWatchlist: [], results: summary.results, mode: summary.mode }).catch(() => {}),
+    pushRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, newWatchlist: [], mode: summary.mode }).catch(() => {}),
   ])
 
   await prisma.autopilotConfig.update({

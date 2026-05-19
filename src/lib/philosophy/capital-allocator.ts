@@ -7,41 +7,55 @@
 //  They bet big when they have the odds. And the rest of the time, they don't."
 //  — Charlie Munger
 //
-// Position size = f(conviction, margin of safety, portfolio crowding, score quality)
-// Higher conviction + wider MOS + uncrowded portfolio = larger position.
+// Position size = f(conviction, margin of safety, portfolio crowding, score, sector)
+// Higher conviction + wider MOS + uncrowded portfolio + no sector concentration = larger bet.
+//
+// Conviction tiers and base allocations:
+//   exceptional  — 20%: score ≥ 85, MOS ≥ 40%. Buffett in 1964 put 40% in AmEx.
+//   strong_buy   — 15%: score ≥ 75, MOS ≥ 30%. High-confidence Graham/Buffett entry.
+//   buy          —  7%: score ≥ 60, MOS ≥ 30%. Standard value entry.
 
 import type { ConvictionLevel } from './scorer'
 
 export interface AllocationInput {
-  totalCapital: number           // total paper/real capital in dollars
-  conviction: ConvictionLevel    // from philosophy scorer
-  marginOfSafety: number         // % e.g. 35.0 means 35%
+  totalCapital: number
+  conviction: ConvictionLevel
+  marginOfSafety: number         // e.g. 35.0 = 35%
   philosophyScore: number        // 0–100
-  price: number                  // current share price
-  maxPositionPct: number         // max % per position from config (e.g. 15)
-  openPositionCount: number      // currently open positions
-  maxPositions: number           // cap from config (e.g. 15)
-  existingPositionValue?: number // current $ value of existing position in this stock
-  deployedCapital?: number       // total capital currently deployed across all positions
-  minCashReservePct?: number     // minimum cash reserve as % of totalCapital (default 15)
-  avgCostBasis?: number          // existing position avg cost — enables averaging-down boost
+  price: number
+  maxPositionPct: number         // user-configured max per position (e.g. 15)
+  openPositionCount: number
+  maxPositions: number
+  existingPositionValue?: number
+  deployedCapital?: number
+  minCashReservePct?: number
+  avgCostBasis?: number
+  // Sector concentration
+  stockSector?: string
+  sectorExposure?: Record<string, number>  // sector → total $ currently held
+  maxSectorPct?: number          // max % of capital in any one sector (default 30)
 }
 
 export interface AllocationResult {
   dollarAmount: number
   shares: number
-  positionPct: number    // actual % of total capital this trade represents
+  positionPct: number
   rationale: string
   canAllocate: boolean
-  reason?: string        // why canAllocate is false
+  reason?: string
 }
 
-// Base allocation as % of total capital by conviction
+// Base allocation as % of total capital by conviction.
+// These are starting points — multipliers push them higher or lower.
 const BASE: Partial<Record<ConvictionLevel, number>> = {
-  strong_buy: 0.12,  // 12% — Buffett's punch-card conviction
-  buy:        0.07,  // 7%  — solid Graham/Buffett opportunity
-  // watchlist / hold / avoid / sell → no new capital
+  exceptional: 0.20,  // Buffett: "When you see a great opportunity, bet heavily"
+  strong_buy:  0.15,  // Raised from 0.12 — high confidence deserves more capital
+  buy:         0.07,
 }
+
+// Hard ceiling per position regardless of multipliers.
+// exceptional can reach 25%, others capped at user's maxPositionPct.
+const EXCEPTIONAL_CEILING = 0.25
 
 export function allocateCapital(input: AllocationInput): AllocationResult {
   const {
@@ -57,6 +71,9 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     deployedCapital,
     minCashReservePct = 15,
     avgCostBasis,
+    stockSector,
+    sectorExposure,
+    maxSectorPct = 30,
   } = input
 
   const base = BASE[conviction] ?? 0
@@ -65,7 +82,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     return noAlloc(`Conviction "${conviction}" does not trigger capital deployment — waiting for better entry.`)
   }
 
-  // Buffett's punch-card: portfolio full means wait for something better to close
+  // Portfolio at capacity
   if (openPositionCount >= maxPositions) {
     return noAlloc(
       `Portfolio at capacity (${openPositionCount}/${maxPositions} positions). ` +
@@ -73,20 +90,18 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     )
   }
 
-  // Fix #10: Cash reserve floor — always keep minCashReservePct% in reserve
-  // Buffett keeps Berkshire's cash above $30B at all times; reserves are permanent dry powder
+  // Cash reserve floor — keep minCashReservePct% permanently in reserve
   if (deployedCapital !== undefined) {
     const maxDeployable = totalCapital * (1 - minCashReservePct / 100)
     if (deployedCapital >= maxDeployable) {
       return noAlloc(
         `Cash reserve floor reached — deployed $${deployedCapital.toFixed(0)} of $${maxDeployable.toFixed(0)} max ` +
-        `(${minCashReservePct}% reserve required). Free capital before adding positions. Buffett: dry powder is a strategic asset.`
+        `(${minCashReservePct}% reserve required). Free capital before adding positions.`
       )
     }
   }
 
-  // Fix #12: Near-full portfolio raises the minimum score threshold
-  // Munger: "As the punch card fills, the bar for the next punch should rise"
+  // Near-full portfolio raises the minimum score threshold (Munger: raise the bar as the book fills)
   const crowdRatio = openPositionCount / maxPositions
   const dynamicMinScore = crowdRatio >= 0.9 ? 70 : crowdRatio >= 0.7 ? 62 : 55
   if (philosophyScore < dynamicMinScore) {
@@ -96,51 +111,79 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     )
   }
 
+  // ── Sector concentration cap ──────────────────────────────────────────────
+  // Never let any single sector exceed maxSectorPct% of total capital.
+  // Correlated sectors reprice together — 4 banks in 2008 is one position, not four.
+  let sectorBlock = false
+  let currentSectorPct = 0
+  if (stockSector && sectorExposure && totalCapital > 0) {
+    const currentSectorValue = sectorExposure[stockSector] ?? 0
+    currentSectorPct = (currentSectorValue / totalCapital) * 100
+    if (currentSectorPct >= maxSectorPct) {
+      sectorBlock = true
+      return noAlloc(
+        `Sector concentration limit reached — ${stockSector} is already ${currentSectorPct.toFixed(1)}% of capital ` +
+        `(max ${maxSectorPct}%). Correlated sector exposure is a single macro bet, not diversification.`
+      )
+    }
+  }
+
   // ── Multipliers ────────────────────────────────────────────────────────────
 
-  // Klarman: size proportionally to the margin of safety
+  // Klarman: size proportionally to margin of safety
   const mosMult =
-    marginOfSafety >= 50 ? 1.30 :
-    marginOfSafety >= 40 ? 1.15 :
+    marginOfSafety >= 50 ? 1.35 :
+    marginOfSafety >= 40 ? 1.20 :
     marginOfSafety >= 30 ? 1.00 :
     marginOfSafety >= 20 ? 0.80 : 0.60
 
-  // Higher philosophy score → higher quality business → more capital warranted
+  // Higher philosophy score → higher quality thesis → more capital warranted
   const scoreMult =
-    philosophyScore >= 80 ? 1.15 :
+    philosophyScore >= 85 ? 1.20 :
+    philosophyScore >= 80 ? 1.10 :
     philosophyScore >= 70 ? 1.05 :
     philosophyScore >= 60 ? 1.00 : 0.85
 
-  // Be more selective as the portfolio fills up (Munger: say no to almost everything)
+  // More selective as portfolio fills
   const crowdMult =
     openPositionCount >= maxPositions * 0.9 ? 0.70 :
     openPositionCount >= maxPositions * 0.7 ? 0.85 : 1.00
 
-  // Fix #11: Averaging-down boost — if price has dropped from our cost basis, it's a better entry
-  // Buffett: "Buy more of your best ideas when Mr. Market hands them to you cheaper"
+  // Averaging-down boost — price below our cost basis is a better entry
   let avgDownMult = 1.0
   let avgDownDiscount = 0
   if (avgCostBasis && avgCostBasis > 0 && price < avgCostBasis) {
     avgDownDiscount = (avgCostBasis - price) / avgCostBasis
-    avgDownMult = avgDownDiscount >= 0.10 ? 1.25 : avgDownDiscount >= 0.05 ? 1.15 : 1.0
+    avgDownMult = avgDownDiscount >= 0.15 ? 1.30 : avgDownDiscount >= 0.10 ? 1.20 : avgDownDiscount >= 0.05 ? 1.10 : 1.0
   }
 
-  // ── Position cap check ────────────────────────────────────────────────────
+  // Sector headroom trim — if approaching sector cap, scale down proportionally
+  let sectorTrimMult = 1.0
+  if (stockSector && sectorExposure && totalCapital > 0) {
+    const headroomPct = maxSectorPct - currentSectorPct
+    if (headroomPct < 10) {
+      // Less than 10% headroom — scale allocation down to fit
+      sectorTrimMult = headroomPct / 10
+    }
+  }
+
+  // ── Position cap ──────────────────────────────────────────────────────────
 
   const existingPct = totalCapital > 0 ? existingPositionValue / totalCapital : 0
-  const allowedPct = Math.max(0, (maxPositionPct / 100) - existingPct)
+  const hardCap = conviction === 'exceptional' ? EXCEPTIONAL_CEILING : maxPositionPct / 100
+  const allowedPct = Math.max(0, hardCap - existingPct)
 
   if (allowedPct <= 0.01) {
     return noAlloc(
-      `Already at max position size (${(existingPct * 100).toFixed(1)}% ≥ ${maxPositionPct}% limit). ` +
-      `Graham: "Never let any single investment jeopardize the portfolio." Hold and compound.`
+      `Already at max position size (${(existingPct * 100).toFixed(1)}% ≥ ${(hardCap * 100).toFixed(0)}% limit). ` +
+      `Hold and compound.`
     )
   }
 
-  // ── Calculate final allocation ────────────────────────────────────────────
+  // ── Final allocation ──────────────────────────────────────────────────────
 
-  const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult
-  const finalPct = Math.min(rawPct, allowedPct, maxPositionPct / 100)
+  const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult * sectorTrimMult
+  const finalPct = Math.min(rawPct, allowedPct, hardCap)
   const dollarTarget = totalCapital * finalPct
   const shares = Math.max(1, Math.floor(dollarTarget / price))
   const actualDollars = shares * price
@@ -148,17 +191,11 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
 
   const rationale = buildRationale({
     conviction, base, mosMult, scoreMult, crowdMult, avgDownMult, avgDownDiscount,
-    finalPct, actualDollars, marginOfSafety, philosophyScore,
-    openPositionCount, maxPositions,
+    sectorTrimMult, finalPct, actualDollars, marginOfSafety, philosophyScore,
+    openPositionCount, maxPositions, stockSector, currentSectorPct, maxSectorPct,
   })
 
-  return {
-    dollarAmount: actualDollars,
-    shares,
-    positionPct: actualPct,
-    canAllocate: true,
-    rationale,
-  }
+  return { dollarAmount: actualDollars, shares, positionPct: actualPct, canAllocate: true, rationale }
 }
 
 function noAlloc(reason: string): AllocationResult {
@@ -173,25 +210,31 @@ function buildRationale(p: {
   crowdMult: number
   avgDownMult: number
   avgDownDiscount: number
+  sectorTrimMult: number
   finalPct: number
   actualDollars: number
   marginOfSafety: number
   philosophyScore: number
   openPositionCount: number
   maxPositions: number
+  stockSector?: string
+  currentSectorPct: number
+  maxSectorPct: number
 }): string {
   const parts: string[] = []
 
-  if (p.conviction === 'strong_buy') {
-    parts.push(`STRONG BUY: base ${(p.base * 100).toFixed(0)}% of capital. Buffett: "When the odds are heavily in your favor, bet accordingly."`)
+  if (p.conviction === 'exceptional') {
+    parts.push(`EXCEPTIONAL: base ${(p.base * 100).toFixed(0)}% of capital. Score ≥85 + MOS ≥40% — rare, highest conviction. Buffett: "When you see a great opportunity, bet heavily."`)
+  } else if (p.conviction === 'strong_buy') {
+    parts.push(`STRONG BUY: base ${(p.base * 100).toFixed(0)}% of capital.`)
   } else {
     parts.push(`BUY: base ${(p.base * 100).toFixed(0)}% of capital.`)
   }
 
   if (p.mosMult > 1.0) {
-    parts.push(`MOS ${p.marginOfSafety.toFixed(1)}% → +${((p.mosMult - 1) * 100).toFixed(0)}% size boost. Klarman: size proportionally to safety margin.`)
+    parts.push(`MOS ${p.marginOfSafety.toFixed(1)}% → +${((p.mosMult - 1) * 100).toFixed(0)}% boost. Klarman: size to the safety margin.`)
   } else if (p.mosMult < 1.0) {
-    parts.push(`MOS ${p.marginOfSafety.toFixed(1)}% → −${((1 - p.mosMult) * 100).toFixed(0)}% reduction; cushion below optimal.`)
+    parts.push(`MOS ${p.marginOfSafety.toFixed(1)}% → −${((1 - p.mosMult) * 100).toFixed(0)}% reduction.`)
   }
 
   if (p.scoreMult !== 1.0) {
@@ -200,14 +243,17 @@ function buildRationale(p: {
   }
 
   if (p.crowdMult < 1.0) {
-    parts.push(`Portfolio crowding (${p.openPositionCount}/${p.maxPositions}) → −${((1 - p.crowdMult) * 100).toFixed(0)}%. Munger: raise the bar as the book fills.`)
+    parts.push(`Portfolio ${Math.round((p.openPositionCount / p.maxPositions) * 100)}% full → −${((1 - p.crowdMult) * 100).toFixed(0)}%. Munger: raise the bar as the book fills.`)
   }
 
   if (p.avgDownMult > 1.0) {
-    parts.push(`Averaging down: price ${(p.avgDownDiscount * 100).toFixed(1)}% below cost basis → +${((p.avgDownMult - 1) * 100).toFixed(0)}% boost. Buffett: buy more when Mr. Market is more fearful.`)
+    parts.push(`Averaging down: price ${(p.avgDownDiscount * 100).toFixed(1)}% below cost basis → +${((p.avgDownMult - 1) * 100).toFixed(0)}%.`)
+  }
+
+  if (p.sectorTrimMult < 1.0 && p.stockSector) {
+    parts.push(`Sector headroom (${p.stockSector} at ${p.currentSectorPct.toFixed(1)}% of ${p.maxSectorPct}% cap) → −${((1 - p.sectorTrimMult) * 100).toFixed(0)}% trim.`)
   }
 
   parts.push(`Final: ${(p.finalPct * 100).toFixed(1)}% = $${p.actualDollars.toFixed(0)}.`)
-
   return parts.join(' ')
 }

@@ -148,12 +148,30 @@ function isCapitalLight(sector?: string): boolean {
   return lightSectors.some(ls => s.includes(ls))
 }
 
+// Tier-aware discount rate adjustment.
+// A wonderful business (high ROIC, expanding moat, no debt) is fundamentally
+// less risky than an adequate one. Discounting both at 10% misprices the best
+// opportunities — wonderful businesses deserve a lower required return, which
+// correctly produces a higher IV and a longer justified holding period.
+const TIER_DISCOUNT_ADJ: Record<string, number> = {
+  wonderful: -0.020,   // 10% base → 8.0%
+  good:      -0.005,   // 10% base → 9.5%
+  adequate:   0.000,   // 10% base → 10.0% (neutral)
+  mediocre:  +0.025,   // 10% base → 12.5%
+}
+
 export function calculateIntrinsicValue(
   fundamentals: StockFundamentals,
   sharesOutstanding?: number,
   discountRate?: number
 ): IntrinsicValueResult {
   const price = fundamentals.price
+
+  // Apply tier-aware discount rate adjustment on top of the user-configured base.
+  // If no explicit rate passed, default to 10% then adjust by tier.
+  const baseDiscount = discountRate ?? 0.10
+  const tierAdj = TIER_DISCOUNT_ADJ[fundamentals.businessTier ?? 'adequate'] ?? 0
+  const effectiveDiscountRate = Math.max(0.06, Math.min(0.18, baseDiscount + tierAdj))
 
   // For cyclical businesses, use normalized EPS in the Graham Number
   // Prefer Shiller EPS (10-year real average) over single-year trailing EPS
@@ -185,7 +203,7 @@ export function calculateIntrinsicValue(
     dcfResult = calculateDCF({
       ownerEarnings: ownerEarningsPerShare,
       growthRate,
-      discountRate,
+      discountRate: effectiveDiscountRate,
     })
   }
 
