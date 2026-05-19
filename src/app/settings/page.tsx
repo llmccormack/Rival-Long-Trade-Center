@@ -15,6 +15,7 @@ interface Config {
   maxPositions: number
   discountRate: number
   minCashReservePct: number
+  maxSectorPct: number
   schwabAccountId: string | null
   lastRunAt: string | null
 }
@@ -106,6 +107,7 @@ export default function SettingsPage() {
           maxPositions: config.maxPositions,
           discountRate: config.discountRate,
           minCashReservePct: config.minCashReservePct,
+          maxSectorPct: config.maxSectorPct,
         }),
       })
       const updated = await res.json()
@@ -313,22 +315,26 @@ export default function SettingsPage() {
 
               <div className="rounded-lg bg-zinc-900/60 p-3 text-[11px] text-zinc-500 space-y-1">
                 <div className="flex justify-between">
+                  <span>Exceptional allocation (score ≥85, MOS ≥40%)</span>
+                  <span className="font-mono text-violet-400">~20% · ${((config.totalCapital ?? 10000) * 0.20).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
                   <span>Strong Buy allocation</span>
-                  <span className="font-mono text-violet-400">~12% · ${((config.totalCapital ?? 10000) * 0.12).toLocaleString()}</span>
+                  <span className="font-mono text-violet-400">~15% · ${((config.totalCapital ?? 10000) * 0.15).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Buy allocation</span>
                   <span className="font-mono text-zinc-300">~7% · ${((config.totalCapital ?? 10000) * 0.07).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Max per position</span>
+                  <span>Max per position (cap)</span>
                   <span className="font-mono text-zinc-300">{config.maxPositionPct ?? 10}% · ${((config.totalCapital ?? 10000) * (config.maxPositionPct ?? 10) / 100).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Cash reserve floor</span>
                   <span className="font-mono text-amber-400">{config.minCashReservePct ?? 15}% · ${((config.totalCapital ?? 10000) * (config.minCashReservePct ?? 15) / 100).toLocaleString()} held back</span>
                 </div>
-                <p className="text-zinc-700 pt-1 border-t border-zinc-800">MOS and score multipliers adjust each position ±30% from base. Buffett: size your best ideas bigger.</p>
+                <p className="text-zinc-700 pt-1 border-t border-zinc-800">MOS and score multipliers adjust each position ±50% from base. Exceptional positions can reach 25% hard ceiling.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

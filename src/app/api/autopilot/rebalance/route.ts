@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
+import { isAuthorized } from '@/lib/auth/cron'
 import { getCompleteFundamentals, getTickerNews } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
@@ -11,8 +12,7 @@ import { getMarketContext } from '@/lib/macro/market-context'
 // Reviews all open positions for sell signals, then runs buy scan on watchlist.
 // Designed to be called by cron or manually from Settings.
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get('authorization')?.replace('Bearer ', '')
-  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
+  if (!isAuthorized(request)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

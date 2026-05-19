@@ -9,6 +9,7 @@ import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
+import { isAuthorized } from '@/lib/auth/cron'
 
 // POST /api/autopilot/full-run
 // Investor-style autopilot: sell then buy, watchlist only.
@@ -16,8 +17,7 @@ import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/noti
 // Step 1: Sell check on all open positions.
 // Step 2: Buy evaluation on all active watchlist items with sector concentration awareness.
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get('authorization')?.replace('Bearer ', '')
-  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
+  if (!isAuthorized(request)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

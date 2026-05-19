@@ -6,13 +6,13 @@ import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
+import { isAuthorized } from '@/lib/auth/cron'
 
 // Called by Railway cron: POST /api/autopilot/run
-// Also callable manually from the Autopilot settings page.
-// Header: Authorization: Bearer <CRON_SECRET>
+// Also callable manually from the Autopilot page (same-origin, no secret needed).
+// External callers must pass: Authorization: Bearer <CRON_SECRET>
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get('authorization')?.replace('Bearer ', '')
-  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
+  if (!isAuthorized(request)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
