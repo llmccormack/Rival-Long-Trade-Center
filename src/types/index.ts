@@ -26,6 +26,7 @@ export interface StockFundamentals {
   longTermDebt?: number
   currentAssets?: number
   currentLiabilities?: number
+  totalAssets?: number               // Total assets (for accruals ratio)
   netCurrentAssets?: number
   netCash?: number                   // Cash - Total Debt (Klarman liquidation floor)
   totalDebt?: number

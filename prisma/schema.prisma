@@ -152,6 +152,7 @@ model PaperPortfolioItem {
   conviction      String?
   mosAtPurchase   Float?
   auditTrail      String[] @default([])
+  dividendsEarned Float    @default(0)
   isOpen          Boolean  @default(true)
   closedAt        DateTime?
   closePrice      Float?

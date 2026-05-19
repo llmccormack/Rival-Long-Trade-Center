@@ -84,9 +84,17 @@ export async function POST(request: NextRequest) {
       const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
 
+      // Deep-value dampening: net-nets and individual CAPE < 12 are statistically cheap
+      // regardless of market temperature. Graham: "At 2/3 of NCAV, buy in any market."
+      // The macro score overlay is calibrated for fairly-priced stocks, not deep-value situations.
+      const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
+      const stockMinScore = isDeepValue
+        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 55) + 3)
+        : effectiveMinScore
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= effectiveMinScore &&
+        philosophy.total >= stockMinScore &&
         iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
@@ -95,9 +103,11 @@ export async function POST(request: NextRequest) {
           action: philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP',
           score: philosophy.total,
           mos: iv.marginOfSafety,
+          grahamNumber: iv.grahamNumber,
+          dcfValue: iv.dcfValue,
           reason: philosophy.vetoedBy.length > 0
             ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds`,
+            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`,
         })
         continue
       }
@@ -200,6 +210,9 @@ export async function POST(request: NextRequest) {
           mos: iv.marginOfSafety,
           conviction: philosophy.conviction,
           rationale: allocation.rationale,
+          grahamNumber: iv.grahamNumber,
+          dcfValue: iv.dcfValue,
+          intrinsicValue: iv.intrinsicValue,
         })
       } else {
         // Live mode — defer to portfolio manager (requires Schwab connection)

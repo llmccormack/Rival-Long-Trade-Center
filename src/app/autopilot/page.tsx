@@ -68,12 +68,16 @@ interface RunResult {
     reason?: string
     shares?: number
     price?: number
+    grahamNumber?: number
+    dcfValue?: number
+    intrinsicValue?: number
   }>
 }
 
 interface PaperPosition {
   ticker: string
   name: string
+  sector?: string
   shares: number
   avgCostBasis: number
   currentPrice: number
@@ -83,6 +87,9 @@ interface PaperPosition {
   philosophyScore: number | null
   conviction: string | null
   mosAtPurchase: number | null
+  needsThesisReview?: boolean
+  daysHeld?: number
+  dividendsEarned?: number
 }
 
 interface PaperPortfolio {
@@ -91,6 +98,8 @@ interface PaperPortfolio {
   totalCost: number
   totalGainLoss: number
   totalGainLossPct: number
+  totalDividends?: number
+  totalReturnWithDividends?: number
 }
 
 const ACTION_STYLE: Record<string, string> = {
@@ -317,9 +326,9 @@ export default function AutopilotPage() {
               <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Autopilot Running</div>
               <div className="flex items-center gap-0">
                 {[
-                  { n: 1, label: 'Scanning market' },
-                  { n: 2, label: 'Populating watchlist' },
-                  { n: 3, label: 'Executing trades' },
+                  { n: 1, label: 'Reviewing positions' },
+                  { n: 2, label: 'Evaluating watchlist' },
+                  { n: 3, label: 'Executing buys' },
                 ].map(({ n, label }, i) => (
                   <div key={n} className="flex items-center gap-0">
                     <div className={cn(
@@ -338,7 +347,7 @@ export default function AutopilotPage() {
                   </div>
                 ))}
               </div>
-              <p className="mt-3 text-xs text-zinc-600">This scans ~40 stocks via FMP and may take 1–2 minutes…</p>
+              <p className="mt-3 text-xs text-zinc-600">Evaluating all watchlist positions — may take 1–2 minutes…</p>
             </>
           )}
 
@@ -347,9 +356,9 @@ export default function AutopilotPage() {
               <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Run Complete</div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
                 {[
-                  { label: 'Stocks Scanned', value: fullRunResult.candidatesScanned },
-                  { label: 'Added to Watchlist', value: fullRunResult.newlyPromoted?.length ?? 0, highlight: true },
-                  { label: 'Trades Executed', value: fullRunResult.buys, highlight: true },
+                  { label: 'Positions Reviewed', value: fullRunResult.positionsReviewed ?? 0 },
+                  { label: 'Sells', value: (fullRunResult.sells ?? 0) + (fullRunResult.vetoSells ?? 0), highlight: (fullRunResult.sells ?? 0) > 0 },
+                  { label: 'Buys Executed', value: fullRunResult.buys, highlight: true },
                   { label: 'Blocked by Veto', value: fullRunResult.vetoed },
                 ].map(({ label, value, highlight }) => (
                   <div key={label} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
@@ -358,14 +367,6 @@ export default function AutopilotPage() {
                   </div>
                 ))}
               </div>
-              {fullRunResult.newlyPromoted?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="text-xs text-zinc-600">Added to watchlist:</span>
-                  {fullRunResult.newlyPromoted.map((t: string) => (
-                    <span key={t} className="rounded border border-violet-800/50 bg-violet-900/20 px-2 py-0.5 text-xs font-mono text-violet-400">{t}</span>
-                  ))}
-                </div>
-              )}
             </>
           )}
         </div>
@@ -390,54 +391,116 @@ export default function AutopilotPage() {
       </div>
 
       {/* Paper portfolio summary */}
-      {portfolio && portfolio.positions.length > 0 && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Paper Portfolio</h2>
-            <div className="flex gap-4 text-xs">
-              <span className="text-zinc-600">
-                Total Value <span className="font-mono text-zinc-300">${portfolio.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </span>
-              <span className={cn('font-mono', portfolio.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                {portfolio.totalGainLoss >= 0 ? '+' : ''}{portfolio.totalGainLossPct.toFixed(2)}%
-              </span>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-800">
-                  {['Ticker', 'Shares', 'Avg Cost', 'Price', 'Value', 'G/L', 'Score', 'MOS'].map(h => (
-                    <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/40">
-                {portfolio.positions.map(p => (
-                  <tr key={p.ticker} className="hover:bg-zinc-800/20 transition-colors">
-                    <td className="py-2.5 pr-4 font-mono font-bold text-zinc-100">{p.ticker}</td>
-                    <td className="py-2.5 pr-4 font-mono text-zinc-400">{p.shares}</td>
-                    <td className="py-2.5 pr-4 font-mono text-zinc-500">${p.avgCostBasis.toFixed(2)}</td>
-                    <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentPrice.toFixed(2)}</td>
-                    <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
-                    <td className={cn('py-2.5 pr-4 font-mono text-xs', p.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                      {p.gainLoss >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
-                    </td>
-                    <td className="py-2.5 pr-4">
-                      <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 55 ? 'text-violet-400' : 'text-zinc-600')}>
-                        {p.philosophyScore ?? '—'}
+      {portfolio && portfolio.positions.length > 0 && (() => {
+        // Sector concentration — group positions by sector
+        const sectorMap: Record<string, number> = {}
+        for (const p of portfolio.positions) {
+          const s = p.sector ?? 'Unknown'
+          sectorMap[s] = (sectorMap[s] ?? 0) + p.currentValue
+        }
+        const sectors = Object.entries(sectorMap)
+          .map(([sector, value]) => ({ sector, value, pct: portfolio.totalValue > 0 ? (value / portfolio.totalValue) * 100 : 0 }))
+          .sort((a, b) => b.value - a.value)
+
+        return (
+          <>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Paper Portfolio</h2>
+                <div className="flex gap-4 text-xs flex-wrap">
+                  <span className="text-zinc-600">
+                    Value <span className="font-mono text-zinc-300">${portfolio.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </span>
+                  {(portfolio.totalDividends ?? 0) > 0 && (
+                    <span className="text-zinc-600">
+                      Dividends <span className="font-mono text-emerald-400">+${(portfolio.totalDividends ?? 0).toFixed(2)}</span>
+                    </span>
+                  )}
+                  <span className={cn('font-mono font-medium', portfolio.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                    {portfolio.totalGainLoss >= 0 ? '+' : ''}{portfolio.totalGainLossPct.toFixed(2)}%
+                    {(portfolio.totalDividends ?? 0) > 0 && (
+                      <span className="text-zinc-500 font-normal ml-1">
+                        ({(portfolio.totalReturnWithDividends ?? 0) >= 0 ? '+' : ''}{(portfolio.totalReturnWithDividends ?? 0).toFixed(2)}% incl. div)
                       </span>
-                    </td>
-                    <td className={cn('py-2.5 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 30 ? 'text-emerald-400' : 'text-amber-400')}>
-                      {p.mosAtPurchase != null ? `${p.mosAtPurchase.toFixed(1)}%` : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-800">
+                      {['Ticker', 'Shares', 'Avg Cost', 'Price', 'Value', 'G/L', 'Score', 'MOS', 'Held'].map(h => (
+                        <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {portfolio.positions.map(p => (
+                      <tr key={p.ticker} className="hover:bg-zinc-800/20 transition-colors">
+                        <td className="py-2.5 pr-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-zinc-100">{p.ticker}</span>
+                            {p.needsThesisReview && (
+                              <span className="rounded border border-amber-700/60 bg-amber-900/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400 uppercase tracking-wide" title="Held > 1 year — review thesis">
+                                REVIEW
+                              </span>
+                            )}
+                          </div>
+                          {p.sector && <div className="text-[10px] text-zinc-600 mt-0.5">{p.sector}</div>}
+                        </td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-400">{p.shares}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-500">${p.avgCostBasis.toFixed(2)}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentPrice.toFixed(2)}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                        <td className={cn('py-2.5 pr-4 font-mono text-xs', p.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                          {p.gainLoss >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 55 ? 'text-violet-400' : 'text-zinc-600')}>
+                            {p.philosophyScore ?? '—'}
+                          </span>
+                        </td>
+                        <td className={cn('py-2.5 pr-4 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 30 ? 'text-emerald-400' : 'text-amber-400')}>
+                          {p.mosAtPurchase != null ? `${p.mosAtPurchase.toFixed(1)}%` : '—'}
+                        </td>
+                        <td className="py-2.5 font-mono text-xs text-zinc-600">
+                          {p.daysHeld != null ? `${p.daysHeld}d` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Sector concentration */}
+            {sectors.length > 0 && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Sector Concentration</h2>
+                <div className="space-y-2.5">
+                  {sectors.map(({ sector, pct }) => (
+                    <div key={sector} className="flex items-center gap-3">
+                      <div className="w-28 shrink-0 text-xs text-zinc-400 truncate">{sector}</div>
+                      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                        <div
+                          className={cn('h-full rounded-full transition-all', pct >= 30 ? 'bg-red-500' : pct >= 20 ? 'bg-amber-500' : 'bg-violet-500')}
+                          style={{ width: `${Math.min(100, pct)}%` }}
+                        />
+                      </div>
+                      <div className={cn('w-10 text-right font-mono text-xs tabular-nums', pct >= 30 ? 'text-red-400' : pct >= 20 ? 'text-amber-400' : 'text-zinc-400')}>
+                        {pct.toFixed(1)}%
+                      </div>
+                      {pct >= 30 && <span className="text-[9px] text-red-500 font-bold uppercase">AT CAP</span>}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-[10px] text-zinc-700">Max 30% per sector. Red = at cap, amber = approaching (≥20%).</p>
+              </div>
+            )}
+          </>
+        )
+      })()}
 
       {/* Parameters + Gates side by side */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -584,8 +647,31 @@ export default function AutopilotPage() {
                           <div className="font-mono text-xs text-zinc-400 leading-5">
                             <span className="text-zinc-600">AUDIT TRAIL / {d.ticker}</span><br />
                             {'>'} Action: {d.action}<br />
-                            {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction})` : ''}<br /></>}
+                            {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction.toUpperCase().replace('_', ' ')})` : ''}<br /></>}
                             {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 30 ? '✓ PASS' : '✗ FAIL'}<br /></>}
+                            {/* Two-column IV projection */}
+                            {(d.grahamNumber || d.dcfValue) && (
+                              <>
+                                {'>'} Intrinsic value breakdown:<br />
+                                <div className="ml-4 mt-1 mb-1 grid grid-cols-2 gap-3 max-w-sm">
+                                  {d.grahamNumber && (
+                                    <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
+                                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Graham Number</div>
+                                      <div className="text-zinc-300 font-bold">${d.grahamNumber.toFixed(2)}</div>
+                                      <div className="text-[9px] text-zinc-700">√(22.5 × EPS × BV)</div>
+                                    </div>
+                                  )}
+                                  {d.dcfValue && (
+                                    <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
+                                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest">DCF Value</div>
+                                      <div className="text-zinc-300 font-bold">${d.dcfValue.toFixed(2)}</div>
+                                      <div className="text-[9px] text-zinc-700">10yr owner earnings</div>
+                                    </div>
+                                  )}
+                                </div>
+                                {d.intrinsicValue && <>{`>`} Composite IV: ${d.intrinsicValue.toFixed(2)} {d.price ? `(current: $${d.price.toFixed(2)})` : ''}<br /></>}
+                              </>
+                            )}
                             {d.shares != null && <>{`>`} Shares: {d.shares} @ ${d.price?.toFixed(2)}<br /></>}
                             {d.reason && <>{`>`} {d.reason}<br /></>}
                           </div>

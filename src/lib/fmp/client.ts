@@ -586,6 +586,7 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     totalDebt: latest.balance?.totalDebt,
     currentAssets: latest.balance?.totalCurrentAssets,
     currentLiabilities: latest.balance?.totalCurrentLiabilities,
+    totalAssets: latest.balance?.totalAssets,
     netCurrentAssets,
     netCash,
 

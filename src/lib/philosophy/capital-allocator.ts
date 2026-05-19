@@ -130,12 +130,18 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
 
   // ── Multipliers ────────────────────────────────────────────────────────────
 
-  // Klarman: size proportionally to margin of safety
+  // Klarman: size proportionally to margin of safety.
+  // More granular curve — a 60% MOS is categorically different from a 35% MOS.
+  // Extreme MOS (≥60%) justifies maximum concentration: the discount itself provides the return.
   const mosMult =
+    marginOfSafety >= 60 ? 1.50 :
     marginOfSafety >= 50 ? 1.35 :
-    marginOfSafety >= 40 ? 1.20 :
+    marginOfSafety >= 45 ? 1.25 :
+    marginOfSafety >= 40 ? 1.15 :
+    marginOfSafety >= 35 ? 1.07 :
     marginOfSafety >= 30 ? 1.00 :
-    marginOfSafety >= 20 ? 0.80 : 0.60
+    marginOfSafety >= 25 ? 0.85 :
+    marginOfSafety >= 20 ? 0.70 : 0.50
 
   // Higher philosophy score → higher quality thesis → more capital warranted
   const scoreMult =

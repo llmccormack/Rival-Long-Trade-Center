@@ -170,6 +170,13 @@ export async function POST(request: NextRequest) {
       const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
 
+      // Deep-value dampening: net-nets and individual CAPE < 12 are statistically cheap
+      // regardless of market temperature. Graham: "At 2/3 of NCAV, buy in any market."
+      const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
+      const stockMinScore = isDeepValue
+        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 55) + 3)
+        : effectiveMinScore
+
       // Skip if earnings within 21 days — don't buy into uncertainty
       const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
       const today = new Date()
@@ -191,7 +198,7 @@ export async function POST(request: NextRequest) {
 
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= effectiveMinScore &&
+        philosophy.total >= stockMinScore &&
         iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
@@ -200,9 +207,11 @@ export async function POST(request: NextRequest) {
           action: philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP',
           score: philosophy.total,
           mos: iv.marginOfSafety,
+          grahamNumber: iv.grahamNumber,
+          dcfValue: iv.dcfValue,
           reason: philosophy.vetoedBy.length > 0
             ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds`,
+            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`,
         })
         continue
       }
@@ -305,6 +314,9 @@ export async function POST(request: NextRequest) {
           mos: iv.marginOfSafety,
           conviction: philosophy.conviction,
           rationale: allocation.rationale,
+          grahamNumber: iv.grahamNumber,
+          dcfValue: iv.dcfValue,
+          intrinsicValue: iv.intrinsicValue,
         })
         await Promise.all([
           sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),

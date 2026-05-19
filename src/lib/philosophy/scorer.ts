@@ -3,7 +3,7 @@
 // No trade executes without a full philosophy audit trail.
 
 import { ALL_PRINCIPLES, SELL_PRINCIPLES, type Principle, type Category } from './principles'
-import type { StockFundamentals, InsiderTransaction } from '@/types'
+import type { StockFundamentals, InsiderTransaction, BusinessTier } from '@/types'
 import type { GrahamCriteria } from '@/types'
 import type { IntrinsicValueResult } from '@/types'
 import type { NewsAnalysis } from '@/lib/fmp/client'
@@ -164,6 +164,36 @@ export function scoreBuyDecision(
     triggered.push({ principle: p, score, note: `FCF/Net Income: ${(fcfQuality * 100).toFixed(0)}% (need ≥70% for quality earnings)` })
     if (fcfQuality < 0.5) audit.push(`WARN: FCF conversion is ${(fcfQuality * 100).toFixed(0)}% of net income. Earnings quality is poor — reported profits may not be real. (Intelligent Investor Ch.12)`)
     else if (fcfQuality >= 0.9) audit.push(`PASS: Strong earnings quality — FCF converts at ${(fcfQuality * 100).toFixed(0)}% of net income.`)
+  }
+
+  // ── Accruals Ratio (Sloan 1996) ───────────────────────────────────────────
+  // Sloan's landmark study: firms with high accruals (earnings not backed by cash)
+  // consistently underperform by ~10%/yr. Firms with low accruals outperform.
+  // Formula: (Net Income - Operating Cash Flow) / Total Assets
+  // <2%: excellent — earnings are almost entirely cash. >8%: red flag.
+
+  if (
+    fundamentals.netIncome !== undefined &&
+    fundamentals.operatingCashFlow !== undefined &&
+    fundamentals.totalAssets && fundamentals.totalAssets > 0
+  ) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c12_eps_skepticism')!
+    if (p) {
+      const accruals = fundamentals.netIncome - fundamentals.operatingCashFlow
+      const accrualsRatio = accruals / fundamentals.totalAssets
+      const accScore = accrualsRatio <= 0.02 ? 1 : accrualsRatio <= 0.05 ? 0.75 :
+        accrualsRatio <= 0.08 ? 0.45 : 0.10
+      triggered.push({ principle: p, score: accScore,
+        note: `Accruals ratio (Sloan): ${(accrualsRatio * 100).toFixed(1)}% of assets (need <2% for highest quality)` })
+      if (accrualsRatio <= 0.02) {
+        audit.push(`PASS: Accruals ratio ${(accrualsRatio * 100).toFixed(1)}% — earnings are almost entirely cash-backed. ` +
+          `Sloan (1996): low-accruals firms generate ~10%/yr abnormal returns. This is highest-quality income. (Accounting Review 1996)`)
+      } else if (accrualsRatio >= 0.08) {
+        audit.push(`WARN: Accruals ratio ${(accrualsRatio * 100).toFixed(1)}% — earnings significantly exceed operating cash flow. ` +
+          `Sloan (1996): high-accruals firms consistently disappoint. Reported profits may be accounting artefacts, not economic reality. ` +
+          `Scrutinise receivables, inventory build, and deferred revenue. (Accounting Review 1996)`)
+      }
+    }
   }
 
   // ── Moat and Business Quality ──────────────────────────────────────────────
@@ -612,7 +642,7 @@ export function scoreBuyDecision(
   const maxTotal = triggered.reduce((sum, t) => sum + t.principle.weight, 0)
   const score = maxTotal > 0 ? (weightedTotal / maxTotal) * 100 : 0
 
-  const conviction = scoreToConviction(score, iv.marginOfSafety, criteria.overallPass)
+  const conviction = scoreToConviction(score, iv.marginOfSafety, criteria.overallPass, fundamentals.businessTier)
   const signal = convictionToSignal(conviction)
 
   audit.push(`\nCOMPOSITE SCORE: ${score.toFixed(0)}/100 | Signal: ${signal} | Conviction: ${conviction.toUpperCase().replace('_', ' ')}`)
@@ -645,14 +675,18 @@ function buildCategoryScores(triggered: TriggeredPrinciple[]): Record<Category, 
   return result as Record<Category, number>
 }
 
-function scoreToConviction(score: number, mos: number, grahamPass: boolean): ConvictionLevel {
-  // Exceptional: rare, highest conviction — Buffett's "punch the card" moment
-  // Requires score ≥ 85 AND MOS ≥ 40% — both must be true simultaneously
-  if (score >= 85 && mos >= 40) return 'exceptional'
-  if (score >= 75 && mos >= 30 && grahamPass) return 'strong_buy'
-  if (score >= 60 && mos >= 30) return 'buy'
-  if (score >= 50 && mos >= 10) return 'watchlist'
-  if (score >= 50 && mos < 0) return 'hold'
+function scoreToConviction(score: number, mos: number, grahamPass: boolean, tier?: BusinessTier): ConvictionLevel {
+  // Wonderful businesses with persistent moats deserve lower score thresholds.
+  // A wonderful company at 78/100 with 38% MOS is better than an adequate one at 76/100.
+  // Buffett: "It's far better to buy a wonderful company at a fair price than a fair company at a wonderful price."
+  const tierBoost = tier === 'wonderful' ? 5 : tier === 'good' ? 2 : 0
+  const adj = score + tierBoost
+
+  if (adj >= 85 && mos >= 40) return 'exceptional'
+  if (adj >= 75 && mos >= 30 && grahamPass) return 'strong_buy'
+  if (adj >= 60 && mos >= 30) return 'buy'
+  if (adj >= 50 && mos >= 10) return 'watchlist'
+  if (adj >= 50 && mos < 0) return 'hold'
   return 'avoid'
 }
 

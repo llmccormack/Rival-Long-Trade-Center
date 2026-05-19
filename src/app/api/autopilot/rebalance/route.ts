@@ -112,13 +112,26 @@ export async function POST(request: NextRequest) {
           signals: sell.signals,
         })
       } else {
-        // Refresh current price
+        const buyScore = scoreBuyDecision(fundamentals, criteria, iv, news)
+
+        // Append timestamped re-evaluation entry to the position's audit trail
+        const reEvalEntry = `[${new Date().toISOString().slice(0, 10)}] RE-EVAL: Score ${buyScore.total}/100 | MOS ${iv.marginOfSafety.toFixed(1)}% | Urgency: ${sell.urgency} | ${sell.signals.length > 0 ? sell.signals[0] : 'Hold — thesis intact'}`
+        const updatedTrail = [...(pos.auditTrail ?? []).slice(-18), reEvalEntry]
+
+        // Accrue dividend income since last update — dividendPerShare is TTM annualised
+        const daysSinceUpdate = (Date.now() - pos.lastUpdated.getTime()) / (1000 * 60 * 60 * 24)
+        const dividendAccrual = (fundamentals.dividendPerShare ?? 0) * pos.shares * (daysSinceUpdate / 365)
+        const newDividendsEarned = ((pos as any).dividendsEarned ?? 0) + dividendAccrual
+
         await prisma.paperPortfolioItem.update({
           where: { id: pos.id },
-          data: { currentPrice: fundamentals.price },
+          data: {
+            currentPrice: fundamentals.price,
+            auditTrail: updatedTrail,
+            dividendsEarned: newDividendsEarned,
+          },
         })
 
-        const buyScore = scoreBuyDecision(fundamentals, criteria, iv, news)
         holdActions.push({
           ticker: pos.stock.ticker,
           action: sell.urgency,
