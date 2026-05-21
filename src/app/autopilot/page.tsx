@@ -18,7 +18,7 @@ const PHILOSOPHY_GATES = [
   {
     step: '02',
     title: 'Philosophy Score Gate',
-    desc: 'Weighted scoring across 137 principles across Graham, Buffett, and Fisher',
+    desc: 'Weighted scoring across 130+ principles across Graham, Buffett, and Fisher',
     examples: ['Must score ≥ 55 / 100 to proceed', 'Category scores checked independently', 'Audit trail generated for every principle'],
     color: 'text-violet-400',
     border: 'border-violet-900/50',
@@ -27,7 +27,7 @@ const PHILOSOPHY_GATES = [
   {
     step: '03',
     title: 'Margin of Safety Gate',
-    desc: 'Graham Ch.20 — The central concept. No exceptions.',
+    desc: 'Graham Ch.20 — The central concept. Consistent application.',
     examples: ['Must show ≥ 30% discount to intrinsic value', 'IV = 40% Graham Number + 60% DCF', 'Owner Earnings used as DCF input'],
     color: 'text-emerald-400',
     border: 'border-emerald-900/50',
@@ -193,7 +193,7 @@ export default function AutopilotPage() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-100">Autopilot</h1>
           <p className="mt-0.5 text-sm text-zinc-500">
-            Every trade routed through 137 Graham · Buffett · Fisher principles.
+            Every trade routed through 130+ Graham · Buffett · Fisher principles. Paper trading only by default.
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -328,7 +328,7 @@ export default function AutopilotPage() {
                 {[
                   { n: 1, label: 'Reviewing positions' },
                   { n: 2, label: 'Evaluating watchlist' },
-                  { n: 3, label: 'Executing buys' },
+                  { n: 3, label: 'Recommending buys' },
                 ].map(({ n, label }, i) => (
                   <div key={n} className="flex items-center gap-0">
                     <div className={cn(
@@ -553,7 +553,7 @@ export default function AutopilotPage() {
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
               {[
                 { label: 'Max Position Size', value: '10%', note: 'Graham/Dodd hard limit' },
-                { label: 'Principles Active', value: '137', note: 'Graham + Buffett + Fisher' },
+                { label: 'Principles Active', value: '130+', note: 'Graham + Buffett + Fisher' },
                 { label: 'Hard Veto Count', value: '4', note: 'Any one blocks trade' },
               ].map(({ label, value, note }) => (
                 <div key={label} className="flex items-center justify-between">

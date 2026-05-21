@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { getCompleteFundamentals } from '@/lib/fmp/client'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
+import { isMutationAuthorized } from '@/lib/auth/api'
 
 export async function GET() {
   let items: any[]
@@ -55,6 +56,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isMutationAuthorized(request)) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const { ticker, notes } = await request.json()
 
   if (!ticker) {
@@ -95,6 +100,10 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (!isMutationAuthorized(request)) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const { id } = await request.json()
     await prisma.watchlistItem.update({ where: { id }, data: { isActive: false } })

@@ -1,11 +1,16 @@
 import { prisma } from '@/lib/db/client'
 import { getCompleteFundamentals } from '@/lib/fmp/client'
+import { isMutationAuthorized } from '@/lib/auth/api'
 
 // POST /api/paper-portfolio/[id] — close a paper position
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!isMutationAuthorized(req as any)) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const { id } = await params
     const body = await req.json().catch(() => ({}))

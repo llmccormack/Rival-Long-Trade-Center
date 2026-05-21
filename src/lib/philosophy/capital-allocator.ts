@@ -114,13 +114,11 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
   // ── Sector concentration cap ──────────────────────────────────────────────
   // Never let any single sector exceed maxSectorPct% of total capital.
   // Correlated sectors reprice together — 4 banks in 2008 is one position, not four.
-  let sectorBlock = false
   let currentSectorPct = 0
   if (stockSector && sectorExposure && totalCapital > 0) {
     const currentSectorValue = sectorExposure[stockSector] ?? 0
     currentSectorPct = (currentSectorValue / totalCapital) * 100
     if (currentSectorPct >= maxSectorPct) {
-      sectorBlock = true
       return noAlloc(
         `Sector concentration limit reached — ${stockSector} is already ${currentSectorPct.toFixed(1)}% of capital ` +
         `(max ${maxSectorPct}%). Correlated sector exposure is a single macro bet, not diversification.`
@@ -191,7 +189,25 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
   const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult * sectorTrimMult
   const finalPct = Math.min(rawPct, allowedPct, hardCap)
   const dollarTarget = totalCapital * finalPct
-  const shares = Math.max(1, Math.floor(dollarTarget / price))
+
+  // Hard clamp: ensure post-trade sector exposure cannot exceed cap
+  let dollarAmount = dollarTarget
+  if (input.stockSector && input.sectorExposure && input.maxSectorPct) {
+    const currentSectorExposure = input.sectorExposure[input.stockSector] ?? 0
+    const maxSectorDollars = (input.totalCapital * input.maxSectorPct) / 100
+    const remainingSectorRoom = Math.max(0, maxSectorDollars - currentSectorExposure)
+    dollarAmount = Math.min(dollarAmount, remainingSectorRoom)
+    if (dollarAmount < price) {
+      return { dollarAmount: 0, shares: 0, positionPct: 0, rationale: '', canAllocate: false, reason: `Sector cap reached for ${input.stockSector}` }
+    }
+  }
+
+  // Minimum share invariant: if computed dollar amount is less than share price, do not force 1 share
+  const rawShares = Math.floor(dollarAmount / price)
+  if (rawShares < 1) {
+    return { dollarAmount: 0, shares: 0, positionPct: 0, rationale: '', canAllocate: false, reason: 'Computed allocation below share price — insufficient capital for even 1 share' }
+  }
+  const shares = rawShares
   const actualDollars = shares * price
   const actualPct = totalCapital > 0 ? (actualDollars / totalCapital) * 100 : 0
 

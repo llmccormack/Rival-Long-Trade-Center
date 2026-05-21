@@ -1,21 +1,18 @@
 import { NextRequest } from 'next/server'
 
-export function isAuthorized(request: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
+export function isMutationAuthorized(request: NextRequest): boolean {
+  const secret = process.env.API_SECRET
   const isProd = process.env.NODE_ENV === 'production'
 
-  // In production, CRON_SECRET must be set
   if (!secret) return !isProd
 
   const authHeader = request.headers.get('authorization')
 
-  // External caller with correct Bearer token
   if (authHeader?.replace('Bearer ', '') === secret) return true
 
-  // No auth header — allow same-origin UI requests
   if (!authHeader) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
-    if (!appUrl) return !isProd  // fail closed in prod if URL not configured
+    if (!appUrl) return !isProd
     const origin = request.headers.get('origin') ?? ''
     const referer = request.headers.get('referer') ?? ''
     if (origin.startsWith(appUrl) || referer.startsWith(appUrl)) return true

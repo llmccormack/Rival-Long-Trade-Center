@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
+import { isMutationAuthorized } from '@/lib/auth/api'
 
 export async function GET() {
   try {
@@ -15,6 +16,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isMutationAuthorized(request)) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const body = await request.json()
     const config = await prisma.autopilotConfig.upsert({

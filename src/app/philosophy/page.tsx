@@ -90,7 +90,7 @@ export default function PhilosophyPage() {
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Philosophy Engine</h1>
         <p className="mt-0.5 text-sm text-zinc-500">
-          {ALL.length} active principles from 14 sources — the brain behind every trade.
+          130+ active principles from 14 sources — the brain behind every trade.
         </p>
       </div>
 
