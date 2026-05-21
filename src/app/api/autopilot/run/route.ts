@@ -7,6 +7,7 @@ import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { isAuthorized } from '@/lib/auth/cron'
+import { isMarketDay } from '@/lib/utils/market-hours'
 
 // Called by Railway cron: POST /api/autopilot/run
 // Also callable manually from the Autopilot page (same-origin, no secret needed).
@@ -27,7 +28,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
+  if (!isMarketDay()) {
+    return Response.json({ message: 'Market closed — autopilot only runs on trading days', ranAt: new Date().toISOString() })
+  }
+
   // isEnabled is informational only — cron always runs regardless
+
+  let dailyBuys = 0
+  let dailyNotional = 0
 
   const results: any[] = []
 
@@ -129,6 +137,12 @@ export async function POST(request: NextRequest) {
       }
 
       if (config.mode === 'paper') {
+        // Daily trade limit check
+        if (dailyBuys >= (config.maxDailyTrades ?? 5)) {
+          results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily trade limit reached' })
+          continue
+        }
+
         const stock = await prisma.stock.upsert({
           where: { ticker: item.stock.ticker },
           create: {
@@ -178,6 +192,23 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        // Daily notional limit check
+        if (dailyNotional + allocation.dollarAmount > (config.maxDailyNotional ?? 2000)) {
+          results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily notional limit reached' })
+          continue
+        }
+
+        // Single trade notional clamp
+        if (allocation.dollarAmount > (config.maxSingleNotional ?? 1000)) {
+          allocation.dollarAmount = config.maxSingleNotional ?? 1000
+          allocation.shares = Math.floor(allocation.dollarAmount / fundamentals.price)
+          if (allocation.shares < 1) {
+            results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Single trade notional clamp resulted in 0 shares' })
+            continue
+          }
+          allocation.dollarAmount = allocation.shares * fundamentals.price
+        }
+
         if (existing) {
           const newShares = existing.shares + allocation.shares
           const newAvg = (existing.shares * existing.avgCostBasis + allocation.shares * fundamentals.price) / newShares
@@ -205,6 +236,8 @@ export async function POST(request: NextRequest) {
           sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
         }
         deployedCapital += allocation.dollarAmount
+        dailyBuys += 1
+        dailyNotional += allocation.dollarAmount
 
         await prisma.alert.create({
           data: {
@@ -270,6 +303,16 @@ export async function POST(request: NextRequest) {
     where: { id: 'singleton' },
     data: { lastRunAt: new Date(), lastRunResult: summary },
   })
+
+  try {
+    await prisma.auditLog.create({
+      data: {
+        action: 'autopilot_run',
+        actor: 'cron',
+        details: { buys: summary.buys, skipped: summary.skipped, vetoed: summary.vetoed, mode: summary.mode } as any,
+      },
+    })
+  } catch { /* audit failures must not crash main flow */ }
 
   try {
     await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/performance`, { method: 'POST' })

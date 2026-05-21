@@ -181,6 +181,20 @@ model AutopilotConfig {
   lastRunAt         DateTime?
   lastRunResult     Json?
   updatedAt         DateTime @updatedAt
+  maxDailyTrades    Int      @default(5)     // max paper/live buys per day
+  maxDailyNotional  Float    @default(2000)  // max $ deployed in a single day
+  maxSingleNotional Float    @default(1000)  // max $ for a single trade
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  action    String   // e.g. 'autopilot_run', 'config_change', 'paper_buy', 'paper_sell'
+  actor     String   @default("system") // 'cron', 'ui', 'system'
+  details   Json?
+
+  @@index([createdAt])
+  @@index([action])
 }
 
 model SchwabToken {

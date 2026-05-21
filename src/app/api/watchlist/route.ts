@@ -3,6 +3,13 @@ import { prisma } from '@/lib/db/client'
 import { getCompleteFundamentals } from '@/lib/fmp/client'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { isMutationAuthorized } from '@/lib/auth/api'
+import { z } from 'zod'
+
+const WatchlistPostSchema = z.object({
+  ticker: z.string().min(1).max(10).transform(v => v.toUpperCase()),
+  targetPrice: z.number().positive().optional(),
+  notes: z.string().max(500).optional(),
+})
 
 export async function GET() {
   let items: any[]
@@ -60,20 +67,21 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { ticker, notes } = await request.json()
-
-  if (!ticker) {
-    return Response.json({ error: 'Missing ticker' }, { status: 400 })
+  const raw = await request.json()
+  const parsed = WatchlistPostSchema.safeParse(raw)
+  if (!parsed.success) {
+    return Response.json({ error: 'Invalid request body', details: parsed.error.issues }, { status: 400 })
   }
+  const { ticker, notes } = parsed.data
 
   try {
-    const fund = await getCompleteFundamentals(ticker.toUpperCase())
+    const fund = await getCompleteFundamentals(ticker)
     const iv = calculateIntrinsicValue(fund, fund.sharesOutstanding)
 
     const stock = await prisma.stock.upsert({
-      where: { ticker: ticker.toUpperCase() },
+      where: { ticker },
       create: {
-        ticker: ticker.toUpperCase(),
+        ticker,
         name: fund.name,
         sector: fund.sector,
         industry: fund.industry,
@@ -93,7 +101,7 @@ export async function POST(request: NextRequest) {
       update: { isActive: true, notes },
     })
 
-    return Response.json({ id: item.id, ticker: ticker.toUpperCase(), targetPrice: item.targetPrice })
+    return Response.json({ id: item.id, ticker, targetPrice: item.targetPrice })
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 })
   }

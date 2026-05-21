@@ -33,11 +33,21 @@ async function getPortfolioData() {
     lastRebalance = await prisma.quarterlyRebalance.findFirst({ orderBy: { executedAt: 'desc' } })
   } catch {}
 
-  return { positions, lastRebalance }
+  let closedPositions: any[] = []
+  try {
+    closedPositions = await prisma.paperPortfolioItem.findMany({
+      where: { isOpen: false },
+      include: { stock: true },
+      orderBy: { closedAt: 'desc' },
+      take: 20,
+    })
+  } catch {}
+
+  return { positions, lastRebalance, closedPositions }
 }
 
 export default async function PortfolioPage() {
-  const { positions, lastRebalance } = await getPortfolioData()
+  const { positions, lastRebalance, closedPositions } = await getPortfolioData()
 
   const totalValue = positions.reduce((s, p) => s + p.currentValue, 0)
   const avgMOS = positions.filter(p => p.marginOfSafety != null).length > 0
@@ -86,6 +96,44 @@ export default async function PortfolioPage() {
         <h2 className="mb-3 text-xs font-medium uppercase tracking-widest text-zinc-500">Holdings</h2>
         <PositionsTable positions={positions} />
       </section>
+
+      {/* Closed positions */}
+      {closedPositions.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-300 mb-3">Closed Positions</h2>
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900/50">
+                  <th className="px-4 py-2.5 text-left text-zinc-500 font-medium">Ticker</th>
+                  <th className="px-4 py-2.5 text-right text-zinc-500 font-medium">Entry</th>
+                  <th className="px-4 py-2.5 text-right text-zinc-500 font-medium">Exit</th>
+                  <th className="px-4 py-2.5 text-right text-zinc-500 font-medium">Return</th>
+                  <th className="px-4 py-2.5 text-left text-zinc-500 font-medium">Reason</th>
+                  <th className="px-4 py-2.5 text-right text-zinc-500 font-medium">Closed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closedPositions.map((p: any) => {
+                  const ret = p.closePrice && p.avgCostBasis ? ((p.closePrice - p.avgCostBasis) / p.avgCostBasis * 100) : null
+                  return (
+                    <tr key={p.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/30">
+                      <td className="px-4 py-2.5 font-mono font-bold text-zinc-300">{p.stock.ticker}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-zinc-400">${p.avgCostBasis.toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-zinc-400">{p.closePrice ? `$${p.closePrice.toFixed(2)}` : '—'}</td>
+                      <td className={cn('px-4 py-2.5 text-right font-mono font-bold', ret == null ? 'text-zinc-600' : ret >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                        {ret != null ? `${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600 max-w-[200px] truncate">{p.closeReason ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-right text-zinc-600">{p.closedAt ? new Date(p.closedAt).toLocaleDateString() : '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Sell discipline card */}
       <div className="rounded-xl border border-zinc-800 bg-gradient-to-br from-zinc-900/80 to-zinc-950/60 p-5">

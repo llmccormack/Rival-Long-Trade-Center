@@ -4,7 +4,8 @@
 
 import { writeFileSync } from 'fs'
 
-const API_KEY = 'n2SQXkIW5RTU5QyynxQRS7weM4S4A57g'
+const API_KEY = process.env.FMP_API_KEY
+if (!API_KEY) { console.error('FMP_API_KEY env var required'); process.exit(1) }
 const BASE = 'https://financialmodelingprep.com/stable'
 
 // Diverse universe: value, quality, cyclicals, defensives across sectors

@@ -16,6 +16,7 @@ export interface PhilosophyScore {
   triggeredPrinciples: TriggeredPrinciple[]
   vetoedBy: Principle[]    // any principle that hard-vetoes the trade
   auditTrail: string[]     // human-readable explanation of every decision
+  risks: string[]           // top bear-case risks for the investment
 }
 
 export interface TriggeredPrinciple {
@@ -626,6 +627,28 @@ export function scoreBuyDecision(
 
   // ── Composite Score ────────────────────────────────────────────────────────
 
+  // Build bear-case risks array
+  const f = fundamentals
+  const risks: string[] = []
+
+  // Valuation risk
+  if (f.pe && f.pe > 20) risks.push(`P/E of ${f.pe.toFixed(1)}x leaves limited margin for earnings disappointment`)
+  if (iv && iv.marginOfSafety < 40) risks.push(`Margin of safety of ${iv.marginOfSafety.toFixed(1)}% is thin — a 10% earnings miss could eliminate the discount`)
+
+  // Balance sheet risk
+  if (f.debtToEquity && f.debtToEquity > 0.5) risks.push(`Debt-to-equity of ${f.debtToEquity.toFixed(2)}x — rising rates or a credit crunch could compress valuation multiples`)
+  if (f.currentRatio && f.currentRatio < 1.5) risks.push(`Current ratio of ${f.currentRatio.toFixed(2)} — limited liquidity buffer if business deteriorates`)
+
+  // DCF sensitivity
+  if (iv?.dcfValue) risks.push(`DCF assumes normalized growth continues — terminal value sensitive to growth rate assumptions`)
+
+  // Macro risk
+  if (f.sector) risks.push(`${f.sector} sector exposure — sector-specific regulatory, cyclical, or disruption risk`)
+
+  // Data quality
+  if (!f.freeCashFlow) risks.push('Free cash flow data unavailable — owner earnings estimate relies on accounting income')
+  if (!f.eps || f.eps <= 0) risks.push('No positive earnings history to anchor valuation — speculative element present')
+
   if (vetoed.length > 0) {
     return {
       total: 0,
@@ -635,6 +658,7 @@ export function scoreBuyDecision(
       triggeredPrinciples: triggered,
       vetoedBy: vetoed,
       auditTrail: audit,
+      risks,
     }
   }
 
@@ -655,6 +679,7 @@ export function scoreBuyDecision(
     triggeredPrinciples: triggered,
     vetoedBy: [],
     auditTrail: audit,
+    risks,
   }
 }
 

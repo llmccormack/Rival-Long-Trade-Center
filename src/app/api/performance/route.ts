@@ -68,6 +68,25 @@ export async function GET() {
       firstPurchased: p.firstPurchased,
     })).sort((a, b) => b.gainLossPct - a.gainLossPct)
 
+    // Daily snapshot — write once per calendar day
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const existingSnapshot = await prisma.portfolioSnapshot.findFirst({
+      where: { date: { gte: today } },
+    }).catch(() => null)
+
+    if (!existingSnapshot && totalValue > 0) {
+      await prisma.portfolioSnapshot.create({
+        data: {
+          totalValue,
+          totalCost,
+          gainLossPct: totalGainLossPct,
+          spyPrice: spyPrices.length > 0 ? spyPrices[spyPrices.length - 1].close : null,
+          positions: positionsWithPnl.map(p => ({ ticker: p.ticker, value: p.currentPrice * p.shares, shares: p.shares })),
+        },
+      }).catch(() => {})
+    }
+
     return Response.json({
       hasData: true,
       summary: {

@@ -65,7 +65,14 @@ export async function GET(
       },
     })
 
-    return Response.json(fundamentals)
+    const dataFreshness = {
+      fetchedAt: new Date().toISOString(),
+      priceAgeMinutes: 15, // FMP free tier quotes are ~15min delayed
+      fundamentalsAgeQuarters: 1, // quarterly filings
+      warning: fundamentals.price ? null : 'Price data unavailable — fundamentals may be stale',
+    }
+
+    return Response.json({ ...fundamentals, dataFreshness })
   } catch (err: any) {
     return Response.json(
       { error: 'Failed to fetch fundamentals', message: err.message },
