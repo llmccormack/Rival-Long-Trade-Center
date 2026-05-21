@@ -74,7 +74,7 @@ export default function ScreenerPage() {
   const buySignals = grahamResults.filter(r => r.criteria.overallPass && r.intrinsicValue?.isBuySignal)
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
 
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -122,7 +122,7 @@ export default function ScreenerPage() {
       {tab === 'market' && (
         <>
           {/* How it works */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               { step: '1', label: 'Yahoo Finance pre-screen', desc: 'Pulls 200+ candidates from value screens across the whole US market — free, no API key', color: 'text-sky-400 border-sky-900/40 bg-sky-950/20' },
               { step: '2', label: 'FMP deep analysis', desc: 'Runs full fundamentals on each candidate — income, balance sheet, key metrics, operating margin trend', color: 'text-violet-400 border-violet-900/40 bg-violet-950/20' },

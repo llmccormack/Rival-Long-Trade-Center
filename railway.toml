@@ -7,3 +7,26 @@ healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+
+# ── Autopilot Cron Jobs ─────────────────────────────────────────────────────
+# Configure via Railway Dashboard → your project → "Add New" → "Cron Job"
+# Each job makes an HTTP POST with Authorization: Bearer $CRON_SECRET
+#
+# Recommended schedule (US Eastern — adjust UTC offset for DST):
+#   Full daily run (sell + discover + buy):
+#     Schedule: 0 13 * * 1-5        (9am ET Mon–Fri, i.e. 13:00 UTC)
+#     URL:      $RAILWAY_PUBLIC_DOMAIN/api/autopilot/full-run
+#     Method:   POST
+#     Headers:  Authorization: Bearer $CRON_SECRET
+#
+#   Weekly rebalance review (Friday EOD position check):
+#     Schedule: 0 21 * * 5          (5pm ET Friday, i.e. 21:00 UTC)
+#     URL:      $RAILWAY_PUBLIC_DOMAIN/api/autopilot/rebalance
+#     Method:   POST
+#     Headers:  Authorization: Bearer $CRON_SECRET
+#
+# Required environment variables:
+#   CRON_SECRET          - shared secret for cron authorization
+#   NEXT_PUBLIC_APP_URL  - your Railway public domain (e.g. https://your-app.up.railway.app)
+#   FMP_API_KEY          - Financial Modeling Prep API key
+#   DATABASE_URL         - PostgreSQL connection string (auto-set by Railway Postgres plugin)

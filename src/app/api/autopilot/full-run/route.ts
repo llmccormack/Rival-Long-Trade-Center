@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions } from '@/lib/fmp/client'
+import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
@@ -32,6 +33,60 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
+  // ── Discovery: populate watchlist from Yahoo Finance screens ─────────────
+  // Uses Yahoo-only data (0 FMP calls) to cast a wide net across ~900 US value
+  // stocks from 4 preset screens. Stocks that pass the basic Yahoo pre-filter
+  // are added to the watchlist; the buy phase below then runs the full FMP
+  // philosophy analysis (Graham criteria, DCF, insider, news, etc.) on them.
+  //
+  // API budget: 0 FMP calls here. All philosophy scoring happens in Step 2.
+  const discoveryResults: any[] = []
+  if (config.autoDiscovery !== false) {
+    try {
+      const candidates = await getMarketCandidates({
+        maxPE: 30,
+        maxPB: 4,
+        minMarketCapM: 100,
+      })
+
+      const existingWatchlistTickers = new Set(
+        (await prisma.watchlistItem.findMany({ include: { stock: true } }))
+          .map(w => w.stock.ticker)
+      )
+
+      for (const candidate of candidates) {
+        if (existingWatchlistTickers.has(candidate.symbol)) {
+          discoveryResults.push({ ticker: candidate.symbol, action: 'ALREADY_WATCHED' })
+          continue
+        }
+
+        // Add to watchlist using Yahoo data — no FMP call needed here.
+        // The buy phase (Step 2) runs the full philosophy scoring on watchlist items.
+        try {
+          const stock = await prisma.stock.upsert({
+            where: { ticker: candidate.symbol },
+            create: {
+              ticker: candidate.symbol,
+              name: candidate.name,
+              sector: candidate.sector,
+            },
+            update: {},
+          })
+          await prisma.watchlistItem.upsert({
+            where: { stockId: stock.id },
+            create: {
+              stockId: stock.id,
+              notes: `Auto-discovered via Yahoo (PE: ${candidate.pe?.toFixed(1) ?? 'n/a'}, PB: ${candidate.pb?.toFixed(2) ?? 'n/a'})`,
+            },
+            update: {},
+          })
+          existingWatchlistTickers.add(candidate.symbol)
+          discoveryResults.push({ ticker: candidate.symbol, action: 'ADDED_TO_WATCHLIST', pe: candidate.pe, pb: candidate.pb })
+        } catch { /* skip DB errors per ticker */ }
+      }
+    } catch { /* discovery failure must not abort the run */ }
+  }
+
   // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
   const macro = await getMarketContext()
   const macroAudit = macro ? [formatMarketContext(macro)] : []
@@ -53,6 +108,7 @@ export async function POST(request: NextRequest) {
   for (const pos of openPositions) {
     try {
       const f = await getCompleteFundamentals(pos.stock.ticker)
+      if (f.price <= 0) { sellResults.push({ ticker: pos.stock.ticker, action: 'SKIP', reason: 'No price data' }); continue }
       if (macro?.treasury10yr) {
         f.treasuryYield10yr = macro.treasury10yr
         if (f.ownerEarningsYield !== undefined) {
@@ -147,17 +203,43 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Step 2: Buy evaluation — watchlist only ───────────────────────────────
-  const watchlist = await prisma.watchlistItem.findMany({
+  // ── Step 2: Buy evaluation — watchlist with daily rotation ───────────────
+  // The watchlist can grow large (hundreds of auto-discovered stocks).
+  // Manual items (user-curated, no "Auto-discovered" note) are always analyzed.
+  // Auto-discovered items rotate in daily batches so every stock gets evaluated
+  // over a multi-day cycle without blowing the FMP API budget in a single run.
+  const allWatchlist = await prisma.watchlistItem.findMany({
     where: { isActive: true },
     include: { stock: true },
+    orderBy: { stock: { ticker: 'asc' } },  // stable alphabetical sort for rotation
   })
+
+  const dailyLimit = config.dailyAnalysisLimit ?? 25
+  const manualItems  = allWatchlist.filter(w => !w.notes?.startsWith('Auto-discovered'))
+  const discovered   = allWatchlist.filter(w =>  w.notes?.startsWith('Auto-discovered'))
+  const slotsLeft    = Math.max(0, dailyLimit - manualItems.length)
+
+  // Rotate through auto-discovered items based on calendar day
+  const dayN   = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
+  const start  = discovered.length > 0 ? (dayN * slotsLeft) % discovered.length : 0
+  const rotatedBatch = slotsLeft > 0 && discovered.length > 0
+    ? [
+        ...discovered.slice(start, start + slotsLeft),
+        ...discovered.slice(0, Math.max(0, start + slotsLeft - discovered.length)),
+      ]
+    : []
+
+  const watchlist = [...manualItems, ...rotatedBatch]
 
   const tradeResults: any[] = []
 
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
+      if (fundamentals.price <= 0) {
+        tradeResults.push({ ticker: item.stock.ticker, action: 'SKIP', reason: 'No price data from FMP' })
+        continue
+      }
       if (macro?.treasury10yr) {
         fundamentals.treasuryYield10yr = macro.treasury10yr
         if (fundamentals.ownerEarningsYield !== undefined) {
@@ -339,6 +421,10 @@ export async function POST(request: NextRequest) {
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
+    // Discovery phase
+    discoveryEnabled: config.autoDiscovery !== false,
+    newlyDiscovered: discoveryResults.filter(r => r.action === 'ADDED_TO_WATCHLIST').length,
+    discoveryResults,
     macro: macro ? {
       sp500Cape: macro.sp500Cape,
       marketTemperature: macro.marketTemperature,
@@ -353,7 +439,10 @@ export async function POST(request: NextRequest) {
     vetoSells: sellResults.filter(r => r.action === 'SOLD_NEWS_VETO').length,
     sellResults,
     // Buy phase
+    watchlistTotal: allWatchlist.length,
     watchlistScanned: watchlist.length,
+    watchlistManual: manualItems.length,
+    watchlistDiscovered: discovered.length,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
@@ -361,9 +450,13 @@ export async function POST(request: NextRequest) {
     results: tradeResults,
   }
 
+  const newlyAddedTickers = discoveryResults
+    .filter(r => r.action === 'ADDED_TO_WATCHLIST')
+    .map(r => r.ticker)
+
   await Promise.all([
-    sendRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, skipped: summary.skipped, newWatchlist: [], results: summary.results, mode: summary.mode }).catch(() => {}),
-    pushRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, newWatchlist: [], mode: summary.mode }).catch(() => {}),
+    sendRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, skipped: summary.skipped, newWatchlist: newlyAddedTickers, results: summary.results, mode: summary.mode }).catch(() => {}),
+    pushRunSummary({ buys: summary.buys, sells: summary.sells ?? 0, vetoed: summary.vetoed, newWatchlist: newlyAddedTickers, mode: summary.mode }).catch(() => {}),
   ])
 
   await prisma.autopilotConfig.update({

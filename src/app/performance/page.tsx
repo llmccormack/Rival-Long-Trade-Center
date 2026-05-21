@@ -57,7 +57,7 @@ export default function PerformancePage() {
   }, [])
 
   if (loading) return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <div className="h-8 w-48 animate-pulse rounded bg-zinc-800" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[...Array(4)].map((_, i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-zinc-800" />)}
@@ -66,7 +66,7 @@ export default function PerformancePage() {
   )
 
   if (!data?.hasData) return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Performance</h1>
         <p className="mt-0.5 text-sm text-zinc-500">Portfolio returns vs SPY benchmark.</p>
@@ -83,7 +83,7 @@ export default function PerformancePage() {
   const worst = positions[positions.length - 1]
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Performance</h1>
         <p className="mt-0.5 text-sm text-zinc-500">

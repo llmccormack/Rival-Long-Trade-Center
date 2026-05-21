@@ -175,6 +175,8 @@ model AutopilotConfig {
   discountRate       Float   @default(10)    // DCF discount rate in % (e.g. 10 = 10%)
   minCashReservePct  Float   @default(15)    // minimum % of totalCapital to keep in cash
   maxSectorPct       Float   @default(30)    // max % of capital in any single sector
+  autoDiscovery      Boolean @default(true)  // auto-discover value stocks via Yahoo screener on full runs
+  dailyAnalysisLimit Int     @default(25)    // max watchlist items analyzed per run (manual items always included; rest rotate)
   schwabAccountId   String?
   lastRunAt         DateTime?
   lastRunResult     Json?

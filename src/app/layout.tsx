@@ -4,6 +4,8 @@ import './globals.css'
 import { SideNav } from '@/components/ui/SideNav'
 import { TopBar } from '@/components/ui/TopBar'
 import { TradingModeProvider } from '@/contexts/TradingMode'
+import { MobileMenuProvider } from '@/contexts/MobileMenu'
+import { MobileNav } from '@/components/ui/MobileNav'
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] })
@@ -18,11 +20,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} dark h-full`}>
       <body className="flex h-full min-h-screen bg-zinc-950 text-zinc-100 antialiased">
         <TradingModeProvider>
-          <SideNav />
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <TopBar />
-            <main className="flex flex-1 flex-col overflow-auto">{children}</main>
-          </div>
+          <MobileMenuProvider>
+            <SideNav />
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <TopBar />
+              <main className="flex flex-1 flex-col overflow-auto pb-16 md:pb-0">{children}</main>
+            </div>
+            <MobileNav />
+          </MobileMenuProvider>
         </TradingModeProvider>
       </body>
     </html>

@@ -186,7 +186,7 @@ export default function AutopilotPage() {
   const blocked = decisions.filter(d => d.action === 'VETOED' || d.action === 'ERROR').length
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
 
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -367,6 +367,21 @@ export default function AutopilotPage() {
                   </div>
                 ))}
               </div>
+              {(fullRunResult.newlyDiscovered > 0 || fullRunResult.watchlistTotal > 0) && (
+                <div className="flex flex-wrap gap-3 text-xs text-zinc-500 mb-2">
+                  {fullRunResult.newlyDiscovered > 0 && (
+                    <span className="rounded-full border border-sky-800/40 bg-sky-900/15 px-3 py-1 text-sky-400">
+                      +{fullRunResult.newlyDiscovered} newly discovered
+                    </span>
+                  )}
+                  {fullRunResult.watchlistTotal > 0 && (
+                    <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1">
+                      {fullRunResult.watchlistScanned}/{fullRunResult.watchlistTotal} watchlist analyzed today
+                      {fullRunResult.watchlistTotal > fullRunResult.watchlistScanned && ` · cycles in ${Math.ceil(fullRunResult.watchlistTotal / (fullRunResult.watchlistScanned || 1))} days`}
+                    </span>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

@@ -45,6 +45,10 @@ export async function POST(request: NextRequest) {
   for (const pos of openPositions) {
     try {
       const fundamentals = await getCompleteFundamentals(pos.stock.ticker)
+      if (fundamentals.price <= 0) {
+        holdActions.push({ ticker: pos.stock.ticker, action: 'SKIP', reason: 'No price data from FMP' })
+        continue
+      }
       if (macro?.treasury10yr) {
         fundamentals.treasuryYield10yr = macro.treasury10yr
         if (fundamentals.ownerEarningsYield !== undefined) {
@@ -121,7 +125,7 @@ export async function POST(request: NextRequest) {
         // Accrue dividend income since last update — dividendPerShare is TTM annualised
         const daysSinceUpdate = (Date.now() - pos.lastUpdated.getTime()) / (1000 * 60 * 60 * 24)
         const dividendAccrual = (fundamentals.dividendPerShare ?? 0) * pos.shares * (daysSinceUpdate / 365)
-        const newDividendsEarned = ((pos as any).dividendsEarned ?? 0) + dividendAccrual
+        const newDividendsEarned = (pos.dividendsEarned ?? 0) + dividendAccrual
 
         await prisma.paperPortfolioItem.update({
           where: { id: pos.id },

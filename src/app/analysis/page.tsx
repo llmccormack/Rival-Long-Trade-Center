@@ -15,7 +15,7 @@ export default function AnalysisLandingPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-8 p-8">
+    <div className="flex flex-1 flex-col items-center justify-center gap-8 p-4 md:p-8">
       <div className="text-center">
         <h1 className="text-2xl font-semibold text-zinc-100">Stock Analysis</h1>
         <p className="mt-2 text-sm text-zinc-500">

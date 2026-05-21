@@ -86,7 +86,7 @@ export default function PhilosophyPage() {
   }))
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Philosophy Engine</h1>
         <p className="mt-0.5 text-sm text-zinc-500">

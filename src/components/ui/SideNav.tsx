@@ -38,7 +38,7 @@ export function SideNav() {
   }, [])
 
   return (
-    <aside className="flex h-screen w-[220px] shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-950">
+    <aside className="hidden md:flex h-screen w-[220px] shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-950">
 
       {/* Brand */}
       <div className="px-5 pt-6 pb-5 border-b border-zinc-800/80">

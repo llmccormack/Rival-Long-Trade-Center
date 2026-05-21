@@ -46,7 +46,7 @@ export default async function PortfolioPage() {
   const healthScore = avgMOS != null ? Math.min(100, Math.round(avgMOS + 50)) : null
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold text-zinc-100">Portfolio</h1>

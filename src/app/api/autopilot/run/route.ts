@@ -31,10 +31,22 @@ export async function POST(request: NextRequest) {
 
   const results: any[] = []
 
-  const watchlist = await prisma.watchlistItem.findMany({
+  // Rotation: manual items always analyzed; auto-discovered items rotate daily
+  const allWatchlist = await prisma.watchlistItem.findMany({
     where: { isActive: true },
     include: { stock: true },
+    orderBy: { stock: { ticker: 'asc' } },
   })
+  const dailyLimit   = config.dailyAnalysisLimit ?? 25
+  const manualItems  = allWatchlist.filter(w => !w.notes?.startsWith('Auto-discovered'))
+  const discovered   = allWatchlist.filter(w =>  w.notes?.startsWith('Auto-discovered'))
+  const slotsLeft    = Math.max(0, dailyLimit - manualItems.length)
+  const dayN         = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
+  const start        = discovered.length > 0 ? (dayN * slotsLeft) % discovered.length : 0
+  const rotatedBatch = slotsLeft > 0 && discovered.length > 0
+    ? [...discovered.slice(start, start + slotsLeft), ...discovered.slice(0, Math.max(0, start + slotsLeft - discovered.length))]
+    : []
+  const watchlist = [...manualItems, ...rotatedBatch]
 
   // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
   // Fetch once per run — adjusts cash reserve and min score based on S&P 500 CAPE.
@@ -71,6 +83,10 @@ export async function POST(request: NextRequest) {
   for (const item of watchlist) {
     try {
       const fundamentals = await getCompleteFundamentals(item.stock.ticker)
+      if (fundamentals.price <= 0) {
+        results.push({ ticker: item.stock.ticker, action: 'SKIP', reason: 'No price data from FMP' })
+        continue
+      }
       // Inject treasury yield from macro context so scorer can compute OE spread
       if (macro?.treasury10yr) {
         fundamentals.treasuryYield10yr = macro.treasury10yr
@@ -254,6 +270,10 @@ export async function POST(request: NextRequest) {
     where: { id: 'singleton' },
     data: { lastRunAt: new Date(), lastRunResult: summary },
   })
+
+  try {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}/api/performance`, { method: 'POST' })
+  } catch { /* best effort */ }
 
   return Response.json(summary)
 }

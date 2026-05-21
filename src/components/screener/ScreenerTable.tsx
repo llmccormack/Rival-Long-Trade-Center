@@ -43,8 +43,8 @@ export function ScreenerTable({ results }: ScreenerTableProps) {
   }
 
   return (
-    <div className="overflow-hidden rounded border border-zinc-800">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded border border-zinc-800">
+      <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="border-b border-zinc-800 bg-zinc-900/50">
             {['Ticker', 'Price', 'P/E', 'P/B', 'Cur. Ratio', 'Graham Score', 'MOS', 'Signal', ''].map((h) => (

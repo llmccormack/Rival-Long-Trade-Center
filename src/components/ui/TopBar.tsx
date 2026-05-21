@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useTradingMode } from '@/contexts/TradingMode'
+import { useMobileMenu } from '@/contexts/MobileMenu'
 import { cn } from '@/lib/utils'
 
 const LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ export function TopBar() {
   const pathname = usePathname()
   const router = useRouter()
   const { isPaper } = useTradingMode()
+  const { open } = useMobileMenu()
   const [query, setQuery] = useState('')
 
   const handleSearch = (e: React.FormEvent) => {
@@ -37,6 +39,13 @@ export function TopBar() {
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-4 border-b border-zinc-800/80 bg-zinc-950/80 px-6 backdrop-blur-sm">
+
+      {/* Hamburger — mobile only */}
+      <button onClick={open} className="mr-2 rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300 md:hidden" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 min-w-0">
@@ -70,7 +79,7 @@ export function TopBar() {
       <div className="flex-1" />
 
       {/* Quick ticker search */}
-      <form onSubmit={handleSearch} className="relative">
+      <form onSubmit={handleSearch} className="relative hidden md:block">
         <input
           type="text"
           placeholder="Quick analysis… (e.g. KO)"
@@ -85,7 +94,7 @@ export function TopBar() {
 
       {/* Schwab status */}
       <div className={cn(
-        'flex items-center gap-1.5 text-[11px]',
+        'hidden md:flex items-center gap-1.5 text-[11px]',
         isPaper ? 'text-zinc-600' : 'text-zinc-500'
       )}>
         <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">

@@ -87,8 +87,10 @@ interface FMPProfile {
 }
 
 export async function getProfile(ticker: string): Promise<FMPProfile | null> {
-  const data = await get<FMPProfile[]>(`/profile/${ticker.toUpperCase()}`)
-  return data?.[0] ?? null
+  try {
+    const data = await get<FMPProfile[]>(`/profile/${ticker.toUpperCase()}`)
+    return data?.[0] ?? null
+  } catch { return null }
 }
 
 // ─── Income Statement ─────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ interface FMPIncomeStatement {
 }
 
 export async function getIncomeStatements(ticker: string, limit = 10): Promise<FMPIncomeStatement[]> {
-  return get<FMPIncomeStatement[]>(`/income-statement/${ticker.toUpperCase()}`, { limit })
+  try { return await get<FMPIncomeStatement[]>(`/income-statement/${ticker.toUpperCase()}`, { limit }) } catch { return [] }
 }
 
 // ─── Balance Sheet ────────────────────────────────────────────────────────────
@@ -133,7 +135,7 @@ interface FMPBalanceSheet {
 }
 
 export async function getBalanceSheets(ticker: string, limit = 10): Promise<FMPBalanceSheet[]> {
-  return get<FMPBalanceSheet[]>(`/balance-sheet-statement/${ticker.toUpperCase()}`, { limit })
+  try { return await get<FMPBalanceSheet[]>(`/balance-sheet-statement/${ticker.toUpperCase()}`, { limit }) } catch { return [] }
 }
 
 // ─── Cash Flow ────────────────────────────────────────────────────────────────
@@ -148,7 +150,7 @@ interface FMPCashFlow {
 }
 
 export async function getCashFlows(ticker: string, limit = 10): Promise<FMPCashFlow[]> {
-  return get<FMPCashFlow[]>(`/cash-flow-statement/${ticker.toUpperCase()}`, { limit })
+  try { return await get<FMPCashFlow[]>(`/cash-flow-statement/${ticker.toUpperCase()}`, { limit }) } catch { return [] }
 }
 
 // ─── Key Metrics ──────────────────────────────────────────────────────────────
@@ -174,7 +176,7 @@ interface FMPKeyMetrics {
 }
 
 export async function getKeyMetrics(ticker: string, limit = 10): Promise<FMPKeyMetrics[]> {
-  return get<FMPKeyMetrics[]>(`/key-metrics/${ticker.toUpperCase()}`, { limit })
+  try { return await get<FMPKeyMetrics[]>(`/key-metrics/${ticker.toUpperCase()}`, { limit }) } catch { return [] }
 }
 
 // ─── Dividend History ─────────────────────────────────────────────────────────
@@ -190,8 +192,10 @@ interface FMPDividend {
 }
 
 export async function getDividendHistory(ticker: string): Promise<FMPDividend[]> {
-  return get<FMPDividend[]>(`/historical-price-full/stock_dividend/${ticker.toUpperCase()}`)
-    .then((d: any) => d?.historical ?? [])
+  try {
+    const d: any = await get<any>(`/historical-price-full/stock_dividend/${ticker.toUpperCase()}`)
+    return d?.historical ?? []
+  } catch { return [] }
 }
 
 // ─── Quote ────────────────────────────────────────────────────────────────────
@@ -208,8 +212,10 @@ interface FMPQuote {
 }
 
 export async function getQuote(ticker: string): Promise<FMPQuote | null> {
-  const data = await get<FMPQuote[]>(`/quote/${ticker.toUpperCase()}`)
-  return data?.[0] ?? null
+  try {
+    const data = await get<FMPQuote[]>(`/quote/${ticker.toUpperCase()}`)
+    return data?.[0] ?? null
+  } catch { return null }
 }
 
 // ─── News ─────────────────────────────────────────────────────────────────────
@@ -345,6 +351,10 @@ export async function screenStocks(params: {
   dividendMoreThan?: number
   exchange?: string
   limit?: number
+  peRatioLowerThan?: number
+  priceToBookLowerThan?: number
+  returnOnEquityMoreThan?: number
+  priceToSalesLowerThan?: number
 }): Promise<FMPScreenerResult[]> {
   return get<FMPScreenerResult[]>('/stock-screener', {
     ...params,

@@ -16,6 +16,8 @@ interface Config {
   discountRate: number
   minCashReservePct: number
   maxSectorPct: number
+  autoDiscovery: boolean
+  dailyAnalysisLimit: number
   schwabAccountId: string | null
   lastRunAt: string | null
 }
@@ -108,6 +110,8 @@ export default function SettingsPage() {
           discountRate: config.discountRate,
           minCashReservePct: config.minCashReservePct,
           maxSectorPct: config.maxSectorPct,
+          autoDiscovery: config.autoDiscovery,
+          dailyAnalysisLimit: config.dailyAnalysisLimit,
         }),
       })
       const updated = await res.json()
@@ -147,7 +151,7 @@ export default function SettingsPage() {
   )
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-3xl">
+    <div className="flex flex-col gap-6 p-4 md:p-6 max-w-3xl">
       <div>
         <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
         <p className="mt-0.5 text-sm text-zinc-500">Autopilot configuration, API connections, and system status.</p>
@@ -266,6 +270,22 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
+              <div>
+                <div className="mb-1.5 text-xs text-zinc-500">Auto-Discovery</div>
+                <button
+                  onClick={() => setConfig({ ...config, autoDiscovery: !config.autoDiscovery })}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
+                    config.autoDiscovery
+                      ? 'border-sky-800/60 bg-sky-900/20 text-sky-400'
+                      : 'border-zinc-700 bg-zinc-900 text-zinc-500'
+                  )}
+                  title="When enabled, Full Auto Run screens FMP for value candidates and adds qualifying stocks to your watchlist automatically."
+                >
+                  <span className={cn('h-2 w-2 rounded-full', config.autoDiscovery ? 'bg-sky-500' : 'bg-zinc-600')} />
+                  {config.autoDiscovery ? 'On' : 'Off'}
+                </button>
+              </div>
             </div>
 
             {config.mode === 'live' && (
@@ -278,7 +298,7 @@ export default function SettingsPage() {
             <div className="rounded-lg border border-violet-900/30 bg-violet-950/20 p-4 space-y-4">
               <div className="text-xs font-semibold uppercase tracking-widest text-violet-400">Capital Allocation</div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-zinc-400 mb-1.5 block">Total Capital</label>
                   <div className="relative">
@@ -311,6 +331,24 @@ export default function SettingsPage() {
                     <span>Diversified (30)</span>
                   </div>
                 </div>
+
+                <div>
+                  <div className="flex justify-between mb-1.5">
+                    <label className="text-xs text-zinc-400">Daily Analysis Limit</label>
+                    <span className="text-xs font-mono font-bold text-sky-400">{config.dailyAnalysisLimit ?? 25} / run</span>
+                  </div>
+                  <input
+                    type="range" min={10} max={60} step={5}
+                    value={config.dailyAnalysisLimit ?? 25}
+                    onChange={e => setConfig({ ...config, dailyAnalysisLimit: Number(e.target.value) })}
+                    className="w-full accent-sky-600"
+                  />
+                  <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+                    <span>Conservative (10)</span>
+                    <span>Aggressive (60)</span>
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-zinc-600">Manual watchlist items always included. Auto-discovered stocks rotate in daily batches — higher limit means faster cycle time across your full watchlist.</p>
+                </div>
               </div>
 
               <div className="rounded-lg bg-zinc-900/60 p-3 text-[11px] text-zinc-500 space-y-1">
@@ -337,7 +375,7 @@ export default function SettingsPage() {
                 <p className="text-zinc-700 pt-1 border-t border-zinc-800">MOS and score multipliers adjust each position ±50% from base. Exceptional positions can reach 25% hard ceiling.</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="flex justify-between mb-1.5">
                     <label className="text-xs text-zinc-400">DCF Discount Rate</label>
