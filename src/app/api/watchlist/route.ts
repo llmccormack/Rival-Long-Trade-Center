@@ -16,48 +16,36 @@ export async function GET() {
   try {
     items = await prisma.watchlistItem.findMany({
       where: { isActive: true },
-      include: { stock: true },
+      include: {
+        stock: {
+          include: {
+            intrinsicValues: { orderBy: { calculatedAt: 'desc' }, take: 1 },
+          },
+        },
+      },
       orderBy: { addedAt: 'desc' },
     })
   } catch {
     return Response.json([], { status: 200 })
   }
 
-  const enriched = await Promise.all(
-    items.map(async (item) => {
-      try {
-        const fund = await getCompleteFundamentals(item.stock.ticker)
-        const iv = calculateIntrinsicValue(fund, fund.sharesOutstanding)
-        return {
-          id: item.id,
-          ticker: item.stock.ticker,
-          name: item.stock.name,
-          currentPrice: fund.price,
-          targetPrice: item.targetPrice,
-          intrinsicValue: iv.intrinsicValue,
-          marginOfSafety: iv.marginOfSafety,
-          isBuySignal: iv.isBuySignal,
-          addedAt: item.addedAt,
-          notes: item.notes,
-          expectedCagr10yr: iv.expectedCagr10yr,
-          businessTier: fund.businessTier,
-        }
-      } catch {
-        return {
-          id: item.id,
-          ticker: item.stock.ticker,
-          name: item.stock.name,
-          currentPrice: 0,
-          targetPrice: item.targetPrice,
-          intrinsicValue: undefined,
-          marginOfSafety: undefined,
-          isBuySignal: false,
-          addedAt: item.addedAt,
-          notes: item.notes,
-        }
-      }
-    })
-  )
+  const enriched = items.map((item) => {
+    const iv = item.stock.intrinsicValues?.[0]
+    return {
+      id: item.id,
+      ticker: item.stock.ticker,
+      name: item.stock.name,
+      currentPrice: iv?.currentPrice ?? 0,
+      targetPrice: item.targetPrice,
+      intrinsicValue: iv?.intrinsicValue ?? undefined,
+      marginOfSafety: iv?.marginOfSafety ?? undefined,
+      isBuySignal: iv?.isBuySignal ?? false,
+      addedAt: item.addedAt,
+      notes: item.notes,
+      expectedCagr10yr: undefined,
+      businessTier: undefined,
+    }
+  })
 
   return Response.json(enriched)
 }
