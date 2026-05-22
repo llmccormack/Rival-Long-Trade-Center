@@ -258,6 +258,32 @@ export async function POST(request: NextRequest) {
       }
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
+
+      // Persist IV + stock metadata so watchlist can display without live API calls
+      Promise.all([
+        prisma.intrinsicValue.create({
+          data: {
+            stockId: item.stockId,
+            currentPrice: fundamentals.price,
+            grahamNumber: iv.grahamNumber ?? null,
+            dcfValue: iv.dcfValue ?? null,
+            intrinsicValue: iv.intrinsicValue,
+            marginOfSafety: iv.marginOfSafety,
+            isBuySignal: iv.isBuySignal ?? false,
+            ownerEarnings: fundamentals.ownerEarnings ?? null,
+            discountRateUsed: discountRate,
+          },
+        }),
+        prisma.stock.update({
+          where: { id: item.stockId },
+          data: {
+            name: fundamentals.name,
+            sector: fundamentals.sector ?? undefined,
+            industry: fundamentals.industry ?? undefined,
+          },
+        }),
+      ]).catch(() => {})
+
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
       const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
