@@ -34,7 +34,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'DB unavailable: ' + err.message }, { status: 500 })
   }
 
-  if (!isMarketDay()) {
+  // Only enforce market hours for automated cron runs, not manual UI triggers
+  const isCronRequest = !!request.headers.get('authorization')
+  if (isCronRequest && !isMarketDay()) {
     return Response.json({ message: 'Market closed — autopilot only runs on trading days', ranAt: new Date().toISOString() })
   }
 
