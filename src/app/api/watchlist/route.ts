@@ -23,7 +23,11 @@ export async function GET() {
           },
         },
       },
-      orderBy: { addedAt: 'desc' },
+      orderBy: [
+        { lastScore: { sort: 'desc', nulls: 'last' } },
+        { lastMos: { sort: 'desc', nulls: 'last' } },
+        { addedAt: 'desc' },
+      ],
     })
   } catch {
     return Response.json([], { status: 200 })
