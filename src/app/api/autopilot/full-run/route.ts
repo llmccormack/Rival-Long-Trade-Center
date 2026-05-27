@@ -12,6 +12,7 @@ import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/noti
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
 import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
+import { getSecTickers } from '@/lib/sec/tickers'
 
 // POST /api/autopilot/full-run
 // Investor-style autopilot: sell then buy, watchlist only.
@@ -43,56 +44,73 @@ export async function POST(request: NextRequest) {
   let dailyBuys = 0
   let dailyNotional = 0
 
-  // ── Discovery: populate watchlist from Yahoo Finance screens ─────────────
-  // Uses Yahoo-only data (0 FMP calls) to cast a wide net across ~900 US value
-  // stocks from 4 preset screens. Stocks that pass the basic Yahoo pre-filter
-  // are added to the watchlist; the buy phase below then runs the full FMP
-  // philosophy analysis (Graham criteria, DCF, insider, news, etc.) on them.
+  // ── Discovery: full US market coverage via SEC EDGAR + Yahoo quality signal ─
+  // Phase A: SEC EDGAR pulls every exchange-listed US common stock (~5,000+).
+  //   createMany with skipDuplicates is idempotent — safe to run every day.
+  // Phase B: Yahoo screener flags stocks appearing in value screens right now,
+  //   updating notes as a quality signal overlay on the EDGAR universe.
   //
   // API budget: 0 FMP calls here. All philosophy scoring happens in Step 2.
   const discoveryResults: any[] = []
   if (config.autoDiscovery !== false) {
     try {
-      const candidates = await getMarketCandidates({
-        maxPE: 30,
-        maxPB: 4,
-        minMarketCapM: 100,
-      })
+      // ── Phase A: SEC EDGAR full universe (bulk, ~5,000 US stocks) ──────────
+      // Pull every exchange-listed US common stock from SEC's free ticker list.
+      // Uses createMany with skipDuplicates — safe to run every day, only adds new listings.
+      const secTickers = await getSecTickers()
 
-      const existingWatchlistTickers = new Set(
-        (await prisma.watchlistItem.findMany({ include: { stock: true } }))
-          .map(w => w.stock.ticker)
-      )
+      if (secTickers.length > 0) {
+        // Bulk upsert stocks
+        await prisma.stock.createMany({
+          data: secTickers.map(t => ({ ticker: t.ticker, name: t.name, exchange: t.exchange })),
+          skipDuplicates: true,
+        })
 
-      for (const candidate of candidates) {
-        if (existingWatchlistTickers.has(candidate.symbol)) {
-          discoveryResults.push({ ticker: candidate.symbol, action: 'ALREADY_WATCHED' })
-          continue
+        // Get stock IDs for all SEC tickers
+        const stocks = await prisma.stock.findMany({
+          where: { ticker: { in: secTickers.map(t => t.ticker) } },
+          select: { id: true, ticker: true },
+        })
+
+        // Get existing watchlist stock IDs
+        const existingWatchlistIds = new Set(
+          (await prisma.watchlistItem.findMany({ select: { stockId: true } }))
+            .map(w => w.stockId)
+        )
+
+        // Bulk add new stocks to watchlist
+        const newItems = stocks.filter(s => !existingWatchlistIds.has(s.id))
+        if (newItems.length > 0) {
+          await prisma.watchlistItem.createMany({
+            data: newItems.map(s => ({
+              stockId: s.id,
+              notes: 'Auto-discovered via SEC EDGAR',
+            })),
+            skipDuplicates: true,
+          })
+          discoveryResults.push({ action: 'EDGAR_BULK', newStocks: newItems.length, totalSecTickers: secTickers.length })
+        } else {
+          discoveryResults.push({ action: 'EDGAR_BULK', newStocks: 0, totalSecTickers: secTickers.length })
         }
+      }
 
-        // Add to watchlist using Yahoo data — no FMP call needed here.
-        // The buy phase (Step 2) runs the full philosophy scoring on watchlist items.
+      // ── Phase B: Yahoo screener (quality signal overlay) ──────────────────
+      // Yahoo's preset screens highlight currently undervalued stocks.
+      // These are already in the watchlist from EDGAR; Yahoo just confirms they're
+      // appearing in value screens right now. We update their notes as a signal.
+      const candidates = await getMarketCandidates({ maxPE: 30, maxPB: 4, minMarketCapM: 100 })
+      let yahooHighlighted = 0
+      for (const candidate of candidates) {
         try {
-          const stock = await prisma.stock.upsert({
-            where: { ticker: candidate.symbol },
-            create: {
-              ticker: candidate.symbol,
-              name: candidate.name,
-              sector: candidate.sector,
-            },
-            update: {},
+          await prisma.watchlistItem.updateMany({
+            where: { stock: { ticker: candidate.symbol }, isActive: true },
+            data: { notes: `Yahoo value screen (PE: ${candidate.pe?.toFixed(1) ?? 'n/a'}, PB: ${candidate.pb?.toFixed(2) ?? 'n/a'})` },
           })
-          await prisma.watchlistItem.upsert({
-            where: { stockId: stock.id },
-            create: {
-              stockId: stock.id,
-              notes: `Auto-discovered via Yahoo (PE: ${candidate.pe?.toFixed(1) ?? 'n/a'}, PB: ${candidate.pb?.toFixed(2) ?? 'n/a'})`,
-            },
-            update: {},
-          })
-          existingWatchlistTickers.add(candidate.symbol)
-          discoveryResults.push({ ticker: candidate.symbol, action: 'ADDED_TO_WATCHLIST', pe: candidate.pe, pb: candidate.pb })
-        } catch { /* skip DB errors per ticker */ }
+          yahooHighlighted++
+        } catch { /* skip */ }
+      }
+      if (yahooHighlighted > 0) {
+        discoveryResults.push({ action: 'YAHOO_HIGHLIGHT', count: yahooHighlighted })
       }
     } catch { /* discovery failure must not abort the run */ }
   }
@@ -490,7 +508,7 @@ export async function POST(request: NextRequest) {
     mode: config.mode,
     // Discovery phase
     discoveryEnabled: config.autoDiscovery !== false,
-    newlyDiscovered: discoveryResults.filter(r => r.action === 'ADDED_TO_WATCHLIST').length,
+    newlyDiscovered: discoveryResults.find(r => r.action === 'EDGAR_BULK')?.newStocks ?? 0,
     discoveryResults,
     macro: macro ? {
       sp500Cape: macro.sp500Cape,
