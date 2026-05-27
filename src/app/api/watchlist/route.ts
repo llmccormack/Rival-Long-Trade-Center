@@ -35,6 +35,7 @@ export async function GET() {
       id: item.id,
       ticker: item.stock.ticker,
       name: item.stock.name,
+      sector: item.stock.sector,
       currentPrice: iv?.currentPrice ?? 0,
       targetPrice: item.targetPrice,
       intrinsicValue: iv?.intrinsicValue ?? undefined,
@@ -42,8 +43,12 @@ export async function GET() {
       isBuySignal: iv?.isBuySignal ?? false,
       addedAt: item.addedAt,
       notes: item.notes,
-      expectedCagr10yr: undefined,
-      businessTier: undefined,
+      // Last autopilot analysis results
+      lastScore: item.lastScore ?? undefined,
+      lastMos: item.lastMos ?? undefined,
+      lastAction: item.lastAction ?? undefined,
+      lastSkipReason: item.lastSkipReason ?? undefined,
+      lastAnalyzedAt: item.lastAnalyzedAt ?? undefined,
     }
   })
 

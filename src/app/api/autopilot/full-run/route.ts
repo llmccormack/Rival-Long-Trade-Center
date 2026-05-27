@@ -320,17 +320,23 @@ export async function POST(request: NextRequest) {
         iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
+        const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
+        const skipReason = philosophy.vetoedBy.length > 0
+          ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
+          : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
         tradeResults.push({
           ticker: item.stock.ticker,
-          action: philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP',
+          action,
           score: philosophy.total,
           mos: iv.marginOfSafety,
           grahamNumber: iv.grahamNumber,
           dcfValue: iv.dcfValue,
-          reason: philosophy.vetoedBy.length > 0
-            ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`,
+          reason: skipReason,
         })
+        prisma.watchlistItem.update({
+          where: { stockId: item.stockId },
+          data: { lastScore: philosophy.total, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
+        }).catch(() => {})
         continue
       }
 

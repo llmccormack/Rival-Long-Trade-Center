@@ -114,13 +114,19 @@ model ScreenResult {
 }
 
 model WatchlistItem {
-  id          String   @id @default(cuid())
-  stockId     String   @unique
-  stock       Stock    @relation(fields: [stockId], references: [id])
-  addedAt     DateTime @default(now())
-  targetPrice Float?
-  notes       String?
-  isActive    Boolean  @default(true)
+  id              String    @id @default(cuid())
+  stockId         String    @unique
+  stock           Stock     @relation(fields: [stockId], references: [id])
+  addedAt         DateTime  @default(now())
+  targetPrice     Float?
+  notes           String?
+  isActive        Boolean   @default(true)
+  // Last analysis snapshot — shows why a stock keeps getting skipped
+  lastScore       Int?
+  lastMos         Float?
+  lastAction      String?   // 'SKIP' | 'VETOED' | 'PAPER_BUY' | 'QUEUED_LIVE'
+  lastSkipReason  String?
+  lastAnalyzedAt  DateTime?
 }
 
 model PortfolioItem {

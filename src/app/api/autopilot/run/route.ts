@@ -104,6 +104,32 @@ export async function POST(request: NextRequest) {
       }
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
+
+      // Persist IV + stock metadata so watchlist displays without live API calls
+      Promise.all([
+        prisma.intrinsicValue.create({
+          data: {
+            stockId: item.stockId,
+            currentPrice: fundamentals.price,
+            grahamNumber: iv.grahamNumber ?? null,
+            dcfValue: iv.dcfValue ?? null,
+            intrinsicValue: iv.intrinsicValue,
+            marginOfSafety: iv.marginOfSafety,
+            isBuySignal: iv.isBuySignal ?? false,
+            ownerEarnings: fundamentals.ownerEarnings ?? null,
+            discountRateUsed: discountRate,
+          },
+        }),
+        prisma.stock.update({
+          where: { id: item.stockId },
+          data: {
+            name: fundamentals.name,
+            sector: fundamentals.sector ?? undefined,
+            industry: fundamentals.industry ?? undefined,
+          },
+        }),
+      ]).catch(() => {})
+
       const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
       const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
@@ -122,17 +148,23 @@ export async function POST(request: NextRequest) {
         iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
+        const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
+        const skipReason = philosophy.vetoedBy.length > 0
+          ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
+          : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
         results.push({
           ticker: item.stock.ticker,
-          action: philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP',
+          action,
           score: philosophy.total,
           mos: iv.marginOfSafety,
           grahamNumber: iv.grahamNumber,
           dcfValue: iv.dcfValue,
-          reason: philosophy.vetoedBy.length > 0
-            ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-            : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`,
+          reason: skipReason,
         })
+        prisma.watchlistItem.update({
+          where: { stockId: item.stockId },
+          data: { lastScore: philosophy.total, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
+        }).catch(() => {})
         continue
       }
 
