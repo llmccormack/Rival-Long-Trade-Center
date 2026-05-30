@@ -297,33 +297,64 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Step 2: Buy evaluation — watchlist with daily rotation ───────────────
-  // The watchlist can grow large (hundreds of auto-discovered stocks).
-  // Manual items (user-curated, no "Auto-discovered" note) are always analyzed.
-  // Auto-discovered items rotate in daily batches so every stock gets evaluated
-  // over a multi-day cycle without blowing the FMP API budget in a single run.
+  // ── Step 2: Buy evaluation — priority-based watchlist selection ──────────
+  // Picks the best candidates each day rather than cycling blindly.
+  // Priority order:
+  //   1. Manual items (user-curated) — always included
+  //   2. Yahoo-highlighted (appearing in active value screens) — high signal
+  //   3. Previously scored with high score but failing MOS — close to qualifying
+  //   4. Never analyzed — rotate through these to build coverage
   const allWatchlist = await prisma.watchlistItem.findMany({
     where: { isActive: true },
     include: { stock: true },
-    orderBy: { stock: { ticker: 'asc' } },  // stable alphabetical sort for rotation
   })
 
   const dailyLimit = config.dailyAnalysisLimit ?? 25
-  const manualItems  = allWatchlist.filter(w => !w.notes?.startsWith('Auto-discovered'))
-  const discovered   = allWatchlist.filter(w =>  w.notes?.startsWith('Auto-discovered'))
-  const slotsLeft    = Math.max(0, dailyLimit - manualItems.length)
+  const manualItems = allWatchlist.filter(w => !w.notes?.startsWith('Auto-discovered') && !w.notes?.startsWith('Yahoo value screen'))
 
-  // Rotate through auto-discovered items based on calendar day
-  const dayN   = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
-  const start  = discovered.length > 0 ? (dayN * slotsLeft) % discovered.length : 0
-  const rotatedBatch = slotsLeft > 0 && discovered.length > 0
-    ? [
-        ...discovered.slice(start, start + slotsLeft),
-        ...discovered.slice(0, Math.max(0, start + slotsLeft - discovered.length)),
-      ]
-    : []
+  // Yahoo-highlighted: appeared in Yahoo value screen recently
+  const yahooHighlighted = allWatchlist.filter(w => w.notes?.startsWith('Yahoo value screen'))
 
-  const watchlist = [...manualItems, ...rotatedBatch]
+  // Previously scored auto-discovered: sort by last score desc (closest to buy threshold first)
+  const prevScored = allWatchlist
+    .filter(w => (w.notes?.startsWith('Auto-discovered') || w.notes?.startsWith('SEC')) && w.lastScore !== null)
+    .sort((a, b) => (b.lastScore ?? 0) - (a.lastScore ?? 0))
+
+  // Never analyzed: rotate through these daily to build coverage
+  const neverAnalyzed = allWatchlist.filter(w => w.lastAnalyzedAt === null && !w.notes?.startsWith('Yahoo value screen'))
+  const dayN = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
+
+  // Fill slots in priority order
+  const slotsLeft = Math.max(0, dailyLimit - manualItems.length)
+  const selected = new Set(manualItems.map(w => w.id))
+  const candidates: typeof allWatchlist = [...manualItems]
+
+  // Add Yahoo-highlighted first (up to half remaining slots)
+  const yahooSlots = Math.min(yahooHighlighted.length, Math.floor(slotsLeft / 2))
+  for (const item of yahooHighlighted.slice(0, yahooSlots)) {
+    if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
+  }
+
+  // Add previously high-scoring stocks
+  for (const item of prevScored) {
+    if (candidates.length >= dailyLimit) break
+    if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
+  }
+
+  // Fill remaining slots with never-analyzed (rotating batch)
+  if (candidates.length < dailyLimit && neverAnalyzed.length > 0) {
+    const start = (dayN * dailyLimit) % neverAnalyzed.length
+    const batch = [
+      ...neverAnalyzed.slice(start, start + dailyLimit),
+      ...neverAnalyzed.slice(0, Math.max(0, start + dailyLimit - neverAnalyzed.length)),
+    ]
+    for (const item of batch) {
+      if (candidates.length >= dailyLimit) break
+      if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
+    }
+  }
+
+  const watchlist = candidates.slice(0, dailyLimit)
 
   const tradeResults: any[] = []
 
@@ -593,7 +624,7 @@ export async function POST(request: NextRequest) {
     watchlistTotal: allWatchlist.length,
     watchlistScanned: watchlist.length,
     watchlistManual: manualItems.length,
-    watchlistDiscovered: discovered.length,
+    watchlistDiscovered: allWatchlist.filter(w => w.notes?.startsWith('Auto-discovered') || w.notes?.startsWith('Yahoo value screen') || w.notes?.startsWith('SEC')).length,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
