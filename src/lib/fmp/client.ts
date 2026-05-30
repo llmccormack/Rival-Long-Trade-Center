@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios'
-import type { StockFundamentals } from '@/types'
-import { getYahooFundamentals } from '@/lib/yahoo/fundamentals'
+import type { StockFundamentals, YearlyValue } from '@/types'
+import { detectCyclicality, normalizeEps } from '@/lib/graham/intrinsic-value'
+import { classifyBusinessQuality } from '@/lib/graham/business-quality'
 
 const BASE_URL = 'https://financialmodelingprep.com/api/v3'
 
@@ -367,11 +368,244 @@ export async function screenStocks(params: {
 
 // ─── Composite Fundamentals ───────────────────────────────────────────────────
 
-// Delegates to Yahoo Finance — free, unlimited, no API key required.
-// FMP is kept only for getInsiderTransactions, getTickerNews, and getEarningsCalendar
-// which don't have good Yahoo equivalents.
 export async function getCompleteFundamentals(ticker: string): Promise<StockFundamentals> {
-  return getYahooFundamentals(ticker)
+  const cacheKey = `fundamentals:${ticker.toUpperCase()}`
+  const cached = cache.get<StockFundamentals>(cacheKey)
+  if (cached) return cached
+
+  const [profile, incomeStmts, balanceSheets, cashFlows, keyMetrics, dividends, quote] =
+    await Promise.all([
+      getProfile(ticker),
+      getIncomeStatements(ticker, 10),
+      getBalanceSheets(ticker, 10),
+      getCashFlows(ticker, 10),
+      getKeyMetrics(ticker, 10),
+      getDividendHistory(ticker),
+      getQuote(ticker),
+    ])
+
+  const latest = {
+    income: incomeStmts[0],
+    balance: balanceSheets[0],
+    cashFlow: cashFlows[0],
+    metrics: keyMetrics[0],
+  }
+
+  const price = quote?.price ?? profile?.price ?? 0
+  const shares = quote?.sharesOutstanding ?? 0
+
+  const da = latest.cashFlow?.depreciationAndAmortization ?? 0
+  const totalCapEx = Math.abs(latest.cashFlow?.capitalExpenditure ?? 0)
+  const maintenanceCapEx = Math.min(totalCapEx, da)
+  const ownerEarnings =
+    latest.income && latest.cashFlow
+      ? latest.income.netIncome + da - maintenanceCapEx
+      : undefined
+
+  const netCurrentAssets =
+    latest.balance
+      ? latest.balance.totalCurrentAssets - latest.balance.totalCurrentLiabilities
+      : undefined
+
+  const netCash =
+    latest.balance
+      ? (latest.balance.cashAndCashEquivalents ?? 0) - (latest.balance.totalDebt ?? latest.balance.longTermDebt ?? 0)
+      : undefined
+
+  const operatingMargin =
+    latest.income?.revenue && latest.income.revenue > 0
+      ? latest.income.operatingIncome / latest.income.revenue
+      : undefined
+  const grossMargin =
+    latest.income?.revenue && latest.income.revenue > 0
+      ? latest.income.grossProfit / latest.income.revenue
+      : undefined
+  const ebitMargin =
+    latest.income?.revenue && latest.income.revenue > 0
+      ? latest.income.operatingIncome / latest.income.revenue
+      : undefined
+
+  const opMarginHistory: YearlyValue[] = incomeStmts
+    .filter((s) => s.revenue > 0)
+    .map((s) => ({ year: parseInt(s.calendarYear), value: s.operatingIncome / s.revenue }))
+    .filter((v) => !isNaN(v.year))
+    .reverse()
+
+  let operatingMarginTrend: 'improving' | 'declining' | 'stable' = 'stable'
+  if (opMarginHistory.length >= 5) {
+    const recent = opMarginHistory.slice(-3).map((v) => v.value)
+    const prior  = opMarginHistory.slice(-7, -3).map((v) => v.value)
+    if (recent.length && prior.length) {
+      const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length
+      const priorAvg  = prior.reduce((a, b) => a + b, 0) / prior.length
+      if (recentAvg > priorAvg * 1.05) operatingMarginTrend = 'improving'
+      else if (recentAvg < priorAvg * 0.95) operatingMarginTrend = 'declining'
+    }
+  }
+
+  let peg = latest.metrics?.pegRatio ?? undefined
+  if (!peg && quote?.pe && quote.pe > 0) {
+    const epsHist = incomeStmts
+      .map((s) => ({ year: parseInt(s.calendarYear), value: s.epsdiluted }))
+      .filter((v) => !isNaN(v.year) && v.value > 0)
+      .reverse()
+    if (epsHist.length >= 2) {
+      const first = epsHist[0].value
+      const last  = epsHist[epsHist.length - 1].value
+      const years = epsHist[epsHist.length - 1].year - epsHist[0].year
+      if (years > 0 && first > 0) {
+        const cagr = (Math.pow(last / first, 1 / years) - 1) * 100
+        if (cagr > 0) peg = quote.pe / cagr
+      }
+    }
+  }
+
+  const earningsYield = latest.metrics?.earningsYield ?? undefined
+  const priceToFreeCashFlow      = latest.metrics?.priceToFreeCashFlowsRatio ?? undefined
+  const priceToOperatingCashFlow = latest.metrics?.priceToOperatingCashFlowsRatio ?? undefined
+
+  const epsHistory: YearlyValue[] = incomeStmts
+    .map((s) => ({ year: parseInt(s.calendarYear), value: s.epsdiluted }))
+    .filter((v) => !isNaN(v.year) && v.value != null)
+    .reverse()
+
+  const revenueHistory: YearlyValue[] = incomeStmts
+    .map((s) => ({ year: parseInt(s.calendarYear), value: s.revenue }))
+    .filter((v) => !isNaN(v.year) && v.value != null)
+    .reverse()
+
+  const fcfHistory: YearlyValue[] = cashFlows
+    .map((s) => ({ year: parseInt(s.calendarYear), value: s.freeCashFlow }))
+    .filter((v) => !isNaN(v.year) && v.value != null)
+    .reverse()
+
+  const bookValueHistory: YearlyValue[] = balanceSheets
+    .map((s) => ({ year: parseInt(s.calendarYear), value: s.bookValuePerShare }))
+    .filter((v) => !isNaN(v.year) && v.value != null)
+    .reverse()
+
+  const roicHistory: YearlyValue[] = keyMetrics
+    .map((m) => ({ year: parseInt(m.calendarYear), value: m.roic }))
+    .filter((v) => !isNaN(v.year) && v.value != null)
+    .reverse()
+
+  const currentYear = new Date().getFullYear()
+  const shillerEpsData = epsHistory.filter(v => v.value > 0).slice(-10)
+  const shillerEps: number | undefined = shillerEpsData.length >= 5
+    ? shillerEpsData.reduce((s, v) => s + v.value * Math.pow(1.03, currentYear - v.year), 0) / shillerEpsData.length
+    : undefined
+  const capeRatio = shillerEps && shillerEps > 0 ? price / shillerEps : undefined
+
+  const ncav = latest.balance
+    ? latest.balance.totalCurrentAssets - latest.balance.totalLiabilities
+    : undefined
+  const ncavPerShare = ncav !== undefined && shares > 0 ? ncav / shares : undefined
+  const isNetNet = ncavPerShare !== undefined && price > 0 && price < ncavPerShare * 0.67
+
+  const sharesHistory: YearlyValue[] = incomeStmts
+    .filter(s => (s.weightedAverageShsOut ?? 0) > 0)
+    .map(s => ({ year: parseInt(s.calendarYear), value: s.weightedAverageShsOut! }))
+    .filter(v => !isNaN(v.year))
+    .reverse()
+
+  const shareCountCagr5yr: number | undefined = (() => {
+    const sorted = [...sharesHistory].sort((a, b) => a.year - b.year).slice(-6)
+    if (sorted.length < 4) return undefined
+    const first = sorted[0].value
+    const last  = sorted[sorted.length - 1].value
+    const years = sorted[sorted.length - 1].year - sorted[0].year
+    if (years <= 0 || first <= 0) return undefined
+    return Math.pow(last / first, 1 / years) - 1
+  })()
+  const isDiluting = shareCountCagr5yr !== undefined && shareCountCagr5yr > 0.01
+
+  const ownerEarningsYield =
+    ownerEarnings && shares > 0 && price > 0
+      ? ownerEarnings / shares / price
+      : undefined
+
+  const dividendYears = new Set(dividends.map((d) => new Date(d.date).getFullYear())).size
+
+  const dividendHistory: YearlyValue[] = dividends
+    .reduce((acc: YearlyValue[], d) => {
+      const year = new Date(d.date).getFullYear()
+      const existing = acc.find((v) => v.year === year)
+      if (existing) existing.value += d.dividend
+      else acc.push({ year, value: d.dividend })
+      return acc
+    }, [])
+    .sort((a, b) => a.year - b.year)
+    .slice(-10)
+
+  const result: StockFundamentals = {
+    ticker: ticker.toUpperCase(),
+    name: profile?.companyName ?? ticker,
+    sector: profile?.sector,
+    industry: profile?.industry,
+    exchange: profile?.exchangeShortName,
+    price,
+    marketCap: profile?.mktCap ?? quote?.marketCap,
+    sharesOutstanding: shares,
+    pe: latest.metrics?.peRatio ?? quote?.pe,
+    pb: latest.metrics?.pbRatio,
+    eps: latest.income?.epsdiluted ?? quote?.eps,
+    bookValuePerShare: latest.balance?.bookValuePerShare,
+    peg,
+    earningsYield,
+    priceToFreeCashFlow,
+    priceToOperatingCashFlow,
+    enterpriseValue: latest.metrics?.enterpriseValue,
+    ebitMargin,
+    currentRatio: latest.metrics?.currentRatio,
+    debtToEquity: latest.metrics?.debtToEquity,
+    longTermDebt: latest.balance?.longTermDebt,
+    totalDebt: latest.balance?.totalDebt,
+    currentAssets: latest.balance?.totalCurrentAssets,
+    currentLiabilities: latest.balance?.totalCurrentLiabilities,
+    totalAssets: latest.balance?.totalAssets,
+    netCurrentAssets,
+    netCash,
+    roe: latest.metrics?.roe,
+    roic: latest.metrics?.roic,
+    netIncome: latest.income?.netIncome,
+    revenue: latest.income?.revenue,
+    grossProfit: latest.income?.grossProfit,
+    operatingIncome: latest.income?.operatingIncome,
+    grossMargin,
+    operatingMargin,
+    operatingMarginTrend,
+    operatingCashFlow: latest.cashFlow?.operatingCashFlow,
+    capitalExpenditures: latest.cashFlow?.capitalExpenditure,
+    maintenanceCapEx,
+    freeCashFlow: latest.cashFlow?.freeCashFlow,
+    depreciation: latest.cashFlow?.depreciationAndAmortization,
+    ownerEarnings,
+    dividendPerShare: latest.income?.dividendPerShareTTM,
+    dividendYield: latest.metrics?.dividendYield,
+    epsHistory,
+    revenueHistory,
+    fcfHistory,
+    dividendHistory,
+    bookValueHistory,
+    operatingMarginHistory: opMarginHistory,
+    roicHistory,
+    sharesHistory,
+    isCyclical: epsHistory.length >= 5 ? detectCyclicality(epsHistory) : false,
+    normalizedEps: epsHistory.length >= 5 ? normalizeEps(epsHistory) : undefined,
+    shillerEps,
+    capeRatio,
+    totalLiabilities: latest.balance?.totalLiabilities,
+    ncav,
+    ncavPerShare,
+    isNetNet,
+    shareCountCagr5yr,
+    isDiluting,
+    ownerEarningsYield,
+  }
+
+  result.businessTier = classifyBusinessQuality(result).tier
+  cache.set(cacheKey, result, FUNDAMENTALS_TTL)
+  return result
 }
 
 // ─── Insider Transactions ─────────────────────────────────────────────────────
