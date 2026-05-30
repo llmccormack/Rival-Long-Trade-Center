@@ -12,7 +12,8 @@ import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/noti
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
 import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
-import { getSecTickers } from '@/lib/sec/tickers'
+import { getSecTickers, getDailyBatch } from '@/lib/sec/tickers'
+import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
 
 // POST /api/autopilot/full-run
 // Investor-style autopilot: sell then buy, watchlist only.
@@ -113,6 +114,71 @@ export async function POST(request: NextRequest) {
         discoveryResults.push({ action: 'YAHOO_HIGHLIGHT', count: yahooHighlighted })
       }
     } catch { /* discovery failure must not abort the run */ }
+
+    // ── Tier 2 Discovery: SEC EDGAR full-market scan (50/day, pre-filtered) ─
+    // Cycles through all ~10,000 US public company tickers from SEC EDGAR.
+    // 50 tickers/day are fetched from Yahoo for a quick value pre-filter,
+    // and only those passing the filter are added to the watchlist.
+    // At 50/day the full universe cycles in ~200 days.
+    try {
+      const allSecTickers = await getSecTickers()
+
+      // Reuse the watchlist we already built above for the already-watched set
+      const currentWatched = new Set(
+        (await prisma.watchlistItem.findMany({ include: { stock: true } }))
+          .map(w => w.stock.ticker)
+      )
+
+      const secBatch = getDailyBatch(allSecTickers, currentWatched, 50)
+
+      if (secBatch.length > 0) {
+        const quotes = await getQuickQuotes(secBatch.map(t => t.ticker))
+
+        for (const q of quotes) {
+          // Value pre-filter: must be equity, price > $1, marketCap > $50M,
+          // and show at least one value signal (low PE or low PB)
+          if (q.quoteType !== 'EQUITY') continue
+          if (q.price < 1) continue
+          if (q.marketCap > 0 && q.marketCap < 50_000_000) continue // skip micro-caps < $50M
+
+          const hasValueSignal =
+            (q.pe !== null && q.pe > 0 && q.pe < 30) ||
+            (q.pb !== null && q.pb > 0 && q.pb < 3)
+
+          if (!hasValueSignal) continue
+          if (currentWatched.has(q.ticker)) continue
+
+          try {
+            const secInfo = secBatch.find(t => t.ticker === q.ticker)
+            const stock = await prisma.stock.upsert({
+              where: { ticker: q.ticker },
+              create: {
+                ticker: q.ticker,
+                name: q.name ?? secInfo?.name ?? q.ticker,
+                exchange: secInfo?.exchange ?? undefined,
+              },
+              update: {},
+            })
+            await prisma.watchlistItem.upsert({
+              where: { stockId: stock.id },
+              create: {
+                stockId: stock.id,
+                notes: `Auto-discovered via SEC EDGAR (PE: ${q.pe?.toFixed(1) ?? 'n/a'}, PB: ${q.pb?.toFixed(2) ?? 'n/a'})`,
+              },
+              update: {},
+            })
+            currentWatched.add(q.ticker)
+            discoveryResults.push({
+              ticker: q.ticker,
+              action: 'ADDED_TO_WATCHLIST',
+              source: 'SEC',
+              pe: q.pe,
+              pb: q.pb,
+            })
+          } catch { /* skip DB errors per ticker */ }
+        }
+      }
+    } catch { /* SEC Tier 2 discovery failure must not abort the run */ }
   }
 
   // ── Macro market context (Shiller CAPE overlay) ──────────────────────────
