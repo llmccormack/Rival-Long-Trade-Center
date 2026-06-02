@@ -117,6 +117,7 @@ export default function AutopilotPage() {
   const [minScore, setMinScore] = useState(55)
   const [minMOS, setMinMOS] = useState(30)
   const [lastRun, setLastRun] = useState<RunResult | null>(null)
+  const [dailyRundown, setDailyRundown] = useState<string | null>(null)
   const [portfolio, setPortfolio] = useState<PaperPortfolio | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -136,6 +137,7 @@ export default function AutopilotPage() {
         setAutopilotOn(config.isEnabled)
         setMinScore(config.minPhilosophyScore)
         setMinMOS(config.minMarginOfSafety)
+        if (config.dailyRundown) setDailyRundown(config.dailyRundown)
       }
       setLoading(false)
     })
@@ -317,6 +319,17 @@ export default function AutopilotPage() {
           </div>
         )
       })()}
+
+      {/* Daily AI Market Rundown */}
+      {dailyRundown && (
+        <div className="rounded-xl border border-violet-800/30 bg-violet-900/10 p-4 mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-widest text-violet-400">Daily Market Rundown</span>
+            <span className="text-xs text-zinc-600">{lastRun?.ranAt ? new Date(lastRun.ranAt).toLocaleDateString() : ''}</span>
+          </div>
+          <p className="text-sm text-zinc-300 leading-relaxed">{dailyRundown}</p>
+        </div>
+      )}
 
       {/* Full auto run — progress + result */}
       {(fullRunning || fullRunResult) && (

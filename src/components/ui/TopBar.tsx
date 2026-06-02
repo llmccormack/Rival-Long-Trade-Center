@@ -14,6 +14,7 @@ const LABELS: Record<string, string> = {
   '/watchlist': 'Watchlist',
   '/portfolio': 'Portfolio',
   '/philosophy': 'Philosophy Engine',
+  '/chat': 'AI Analyst',
 }
 
 function getLabel(pathname: string) {

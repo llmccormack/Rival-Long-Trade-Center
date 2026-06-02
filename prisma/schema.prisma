@@ -190,6 +190,7 @@ model AutopilotConfig {
   maxDailyTrades    Int      @default(5)     // max paper/live buys per day
   maxDailyNotional  Float    @default(2000)  // max $ deployed in a single day
   maxSingleNotional Float    @default(1000)  // max $ for a single trade
+  dailyRundown      String?                  // AI-generated market rundown from last run
 }
 
 model AuditLog {

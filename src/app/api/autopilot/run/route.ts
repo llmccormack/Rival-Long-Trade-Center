@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
+import { generateRundown } from '@/lib/ai/rundown'
 import { getCompleteFundamentals, getTickerNews, getInsiderTransactions } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
@@ -335,6 +336,33 @@ export async function POST(request: NextRequest) {
     where: { id: 'singleton' },
     data: { lastRunAt: new Date(), lastRunResult: summary },
   })
+
+  // Generate daily rundown
+  const openCount = await prisma.paperPortfolioItem.count({ where: { isOpen: true } }).catch(() => 0)
+  const snapshot = await prisma.portfolioSnapshot.findFirst({ orderBy: { date: 'desc' } }).catch(() => null)
+
+  const rundownText = await generateRundown({
+    ranAt: summary.ranAt,
+    mode: summary.mode,
+    macro: summary.macro,
+    watchlistTotal: allWatchlist.length,
+    watchlistScanned: summary.watchlistScanned,
+    buys: summary.buys,
+    sells: 0,
+    skipped: summary.skipped,
+    vetoed: summary.vetoed,
+    capitalDeployed: summary.capitalDeployed,
+    topResults: (summary.results ?? []).slice(0, 20),
+    openPositions: openCount,
+    portfolioGainPct: snapshot?.gainLossPct,
+  })
+
+  if (rundownText) {
+    await prisma.autopilotConfig.update({
+      where: { id: 'singleton' },
+      data: { dailyRundown: rundownText },
+    }).catch(() => {})
+  }
 
   try {
     await prisma.auditLog.create({
