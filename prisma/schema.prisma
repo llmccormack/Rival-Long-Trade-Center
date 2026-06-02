@@ -173,8 +173,8 @@ model AutopilotConfig {
   id                String   @id @default("singleton")
   isEnabled         Boolean  @default(true)
   mode              String   @default("paper")   // "paper" | "live"
-  minPhilosophyScore Int     @default(55)
-  minMarginOfSafety  Float   @default(20)
+  minPhilosophyScore Int     @default(45)
+  minMarginOfSafety  Float   @default(15)
   maxPositionPct     Float   @default(10)
   totalCapital       Float   @default(10000)
   maxPositions       Int     @default(15)
@@ -187,10 +187,33 @@ model AutopilotConfig {
   lastRunAt         DateTime?
   lastRunResult     Json?
   updatedAt         DateTime @updatedAt
-  maxDailyTrades    Int      @default(5)     // max paper/live buys per day
-  maxDailyNotional  Float    @default(2000)  // max $ deployed in a single day
-  maxSingleNotional Float    @default(1000)  // max $ for a single trade
+  maxDailyTrades    Int      @default(10)    // max paper/live buys per day
+  maxDailyNotional  Float    @default(5000)  // max $ deployed in a single day
+  maxSingleNotional Float    @default(2000)  // max $ for a single trade
   dailyRundown      String?                  // AI-generated market rundown from last run
+}
+
+model MoatAnalysis {
+  id              String   @id @default(cuid())
+  ticker          String
+  stockId         String?
+  companyName     String
+  generatedAt     DateTime @default(now())
+  moatScore       Float
+  moatType        String
+  moatSources     String[] @default([])
+  managementScore Float
+  businessQuality String
+  thesis          String
+  keyRisks        String[] @default([])
+  catalysts       String[] @default([])
+  verdict         String
+  confidence      Float
+  quantScore      Int?
+  mosAtAnalysis   Float?
+
+  @@index([ticker])
+  @@index([generatedAt])
 }
 
 model AuditLog {

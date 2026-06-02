@@ -11,6 +11,7 @@ import { DeepDivePanel } from '@/components/ui/DeepDivePanel'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { prisma } from '@/lib/db/client'
 
 export default async function AnalysisPage({
   params,
@@ -51,6 +52,7 @@ export default async function AnalysisPage({
   let earnings: Awaited<ReturnType<typeof getEarningsCalendar>> = []
   let valuationBands: Awaited<ReturnType<typeof getHistoricalValuationBands>> = []
   let peers: Awaited<ReturnType<typeof getStockPeers>> = []
+  let moatAnalysis: { moatScore: number; moatType: string; moatSources: string[]; managementScore: number; businessQuality: string; thesis: string; keyRisks: string[]; catalysts: string[]; verdict: string; confidence: number; generatedAt: Date } | null = null
 
   try {
     ;[insider, earnings, valuationBands, peers] = await Promise.all([
@@ -62,6 +64,11 @@ export default async function AnalysisPage({
   } catch {
     // enrichment data is optional — page still renders without it
   }
+
+  moatAnalysis = await prisma.moatAnalysis.findFirst({
+    where: { ticker: ticker.toUpperCase() },
+    orderBy: { generatedAt: 'desc' },
+  }).catch(() => null)
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -340,6 +347,129 @@ export default async function AnalysisPage({
           </div>
         </section>
       )}
+
+      {/* Moat Analysis Card */}
+      {moatAnalysis && (() => {
+        const verdictCfg: Record<string, { label: string; cls: string }> = {
+          strong_buy: { label: 'STRONG BUY', cls: 'border-emerald-700 bg-emerald-900/30 text-emerald-400' },
+          buy:        { label: 'BUY',         cls: 'border-sky-700 bg-sky-900/30 text-sky-400' },
+          watch:      { label: 'WATCH',       cls: 'border-amber-700 bg-amber-900/20 text-amber-400' },
+          avoid:      { label: 'AVOID',       cls: 'border-red-700 bg-red-900/30 text-red-400' },
+        }
+        const vc = verdictCfg[moatAnalysis.verdict] ?? verdictCfg.watch
+        const moatBarWidth = `${(moatAnalysis.moatScore / 10) * 100}%`
+        const mgmtBarWidth = `${(moatAnalysis.managementScore / 10) * 100}%`
+        const moatBarColor = moatAnalysis.moatScore >= 7 ? 'bg-emerald-500' : moatAnalysis.moatScore >= 4 ? 'bg-amber-500' : 'bg-red-500'
+        const mgmtBarColor = moatAnalysis.managementScore >= 7 ? 'bg-emerald-500' : moatAnalysis.managementScore >= 4 ? 'bg-amber-500' : 'bg-red-500'
+
+        return (
+          <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">
+                  Moat Analysis — AI Qualitative Layer
+                </h2>
+                <p className="text-[10px] text-zinc-700 mt-0.5">
+                  Based on 10-K filings · Generated {new Date(moatAnalysis.generatedAt).toLocaleDateString()}
+                  {' '}· Confidence {moatAnalysis.confidence}%
+                </p>
+              </div>
+              <span className={cn('rounded border px-3 py-1 text-xs font-bold', vc.cls)}>
+                {vc.label}
+              </span>
+            </div>
+
+            {/* Scores */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-zinc-500">Moat Score</span>
+                  <span className="text-xs font-mono font-bold text-zinc-200">{moatAnalysis.moatScore.toFixed(1)}/10</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-zinc-800">
+                  <div className={cn('h-2 rounded-full transition-all', moatBarColor)} style={{ width: moatBarWidth }} />
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className={cn(
+                    'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                    moatAnalysis.moatType === 'wide' ? 'border-emerald-800 text-emerald-400 bg-emerald-900/20'
+                      : moatAnalysis.moatType === 'narrow' ? 'border-amber-800 text-amber-400 bg-amber-900/20'
+                      : 'border-zinc-700 text-zinc-500 bg-zinc-800'
+                  )}>
+                    {moatAnalysis.moatType.toUpperCase()} MOAT
+                  </span>
+                  <span className={cn(
+                    'rounded border px-1.5 py-0.5 text-[10px] font-semibold',
+                    moatAnalysis.businessQuality === 'exceptional' ? 'border-emerald-800 text-emerald-400 bg-emerald-900/20'
+                      : moatAnalysis.businessQuality === 'good' ? 'border-sky-800 text-sky-400 bg-sky-900/20'
+                      : moatAnalysis.businessQuality === 'fair' ? 'border-zinc-700 text-zinc-400 bg-zinc-800'
+                      : 'border-red-900 text-red-400 bg-red-900/20'
+                  )}>
+                    {moatAnalysis.businessQuality.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-zinc-500">Management Score</span>
+                  <span className="text-xs font-mono font-bold text-zinc-200">{moatAnalysis.managementScore.toFixed(1)}/10</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-zinc-800">
+                  <div className={cn('h-2 rounded-full transition-all', mgmtBarColor)} style={{ width: mgmtBarWidth }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Moat sources */}
+            {moatAnalysis.moatSources.length > 0 && (
+              <div className="mb-4 flex flex-wrap gap-1.5">
+                {moatAnalysis.moatSources.map((source, i) => (
+                  <span key={i} className="rounded-full border border-violet-800/60 bg-violet-900/20 px-2.5 py-0.5 text-[10px] font-semibold text-violet-400">
+                    {source.replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Investment thesis */}
+            <div className="mb-4 rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+              <p className="text-xs text-zinc-300 leading-relaxed">{moatAnalysis.thesis}</p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {/* Key risks */}
+              {moatAnalysis.keyRisks.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-red-500 mb-2">Key Risks</p>
+                  <ul className="space-y-1">
+                    {moatAnalysis.keyRisks.map((risk, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-zinc-400">
+                        <span className="mt-0.5 text-red-500 shrink-0">•</span>
+                        {risk}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Catalysts */}
+              {moatAnalysis.catalysts.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 mb-2">Catalysts</p>
+                  <ul className="space-y-1">
+                    {moatAnalysis.catalysts.map((catalyst, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-zinc-400">
+                        <span className="mt-0.5 text-emerald-500 shrink-0">•</span>
+                        {catalyst}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </section>
+        )
+      })()}
 
       {/* News Panel */}
       {news && (

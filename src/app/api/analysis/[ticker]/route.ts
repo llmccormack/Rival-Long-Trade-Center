@@ -47,7 +47,12 @@ export async function GET(
       })
     }
 
-    return Response.json({ ticker: ticker.toUpperCase(), fundamentals, criteria, intrinsicValue })
+    const moatAnalysis = await prisma.moatAnalysis.findFirst({
+      where: { ticker: ticker.toUpperCase() },
+      orderBy: { generatedAt: 'desc' },
+    }).catch(() => null)
+
+    return Response.json({ ticker: ticker.toUpperCase(), fundamentals, criteria, intrinsicValue, moatAnalysis })
   } catch (err: any) {
     return Response.json(
       { error: 'Analysis failed', message: err.message },

@@ -65,9 +65,9 @@ export async function POST(request: NextRequest) {
   const macroAudit = macro ? [formatMarketContext(macro)] : []
 
   // Apply macro adjustments on top of user config
-  const effectiveMinScore     = (config.minPhilosophyScore ?? 55) + (macro?.minScoreAdj ?? 0)
-  const effectiveMinMos       = config.minMarginOfSafety ?? 30
-  const effectiveCashReserve  = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
+  const effectiveMinScore     = (config.minPhilosophyScore ?? 45) + Math.min(macro?.minScoreAdj ?? 0, 5)
+  const effectiveMinMos       = config.minMarginOfSafety ?? 15
+  const effectiveCashReserve  = (config.minCashReservePct ?? 15) + Math.min(macro?.cashReserveAdj ?? 0, 5)
 
   // Compute deployed capital and sector exposure — used for cash reserve floor and sector caps
   const openPaperPositions = await prisma.paperPortfolioItem.findMany({
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
       // The macro score overlay is calibrated for fairly-priced stocks, not deep-value situations.
       const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
       const stockMinScore = isDeepValue
-        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 55) + 3)
+        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 45) + 3)
         : effectiveMinScore
 
       const passed =

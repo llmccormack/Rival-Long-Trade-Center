@@ -15,6 +15,7 @@ import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
 import { getSecTickers, getDailyBatch } from '@/lib/sec/tickers'
 import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
+import { analyzeMoat, moatScoreAdjustment } from '@/lib/ai/moat-analysis'
 
 // POST /api/autopilot/full-run
 // Investor-style autopilot: sell then buy, watchlist only.
@@ -186,9 +187,9 @@ export async function POST(request: NextRequest) {
   const macro = await getMarketContext()
   const macroAudit = macro ? [formatMarketContext(macro)] : []
 
-  const effectiveMinScore    = (config.minPhilosophyScore ?? 55) + (macro?.minScoreAdj ?? 0)
-  const effectiveMinMos      = config.minMarginOfSafety ?? 30
-  const effectiveCashReserve = (config.minCashReservePct ?? 15) + (macro?.cashReserveAdj ?? 0)
+  const effectiveMinScore    = (config.minPhilosophyScore ?? 45) + Math.min(macro?.minScoreAdj ?? 0, 5)
+  const effectiveMinMos      = config.minMarginOfSafety ?? 15
+  const effectiveCashReserve = (config.minCashReservePct ?? 15) + Math.min(macro?.cashReserveAdj ?? 0, 5)
   const discountRate         = (config.discountRate ?? 10) / 100
   const maxSectorPct         = config.maxSectorPct ?? 30
 
@@ -441,7 +442,7 @@ export async function POST(request: NextRequest) {
       // regardless of market temperature. Graham: "At 2/3 of NCAV, buy in any market."
       const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
       const stockMinScore = isDeepValue
-        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 55) + 3)
+        ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 45) + 3)
         : effectiveMinScore
 
       // Skip if earnings within 21 days — don't buy into uncertainty
@@ -463,28 +464,82 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      // Run moat analysis for promising candidates (score 35+)
+      // This adds qualitative intelligence on top of quantitative scoring
+      let moatAdj = 0
+      let moatData: Awaited<ReturnType<typeof analyzeMoat>> = null
+      if (philosophy.total >= 35 && process.env.ANTHROPIC_API_KEY) {
+        moatData = await analyzeMoat(item.stock.ticker, fundamentals.name, philosophy.total, iv.marginOfSafety).catch(() => null)
+        if (moatData) {
+          moatAdj = moatScoreAdjustment(moatData)
+          // Persist to DB (fire-and-forget)
+          prisma.moatAnalysis.create({
+            data: {
+              ticker: item.stock.ticker,
+              stockId: item.stockId,
+              companyName: fundamentals.name,
+              moatScore: moatData.moatScore,
+              moatType: moatData.moatType,
+              moatSources: moatData.moatSources,
+              managementScore: moatData.managementScore,
+              businessQuality: moatData.businessQuality,
+              thesis: moatData.thesis,
+              keyRisks: moatData.keyRisks,
+              catalysts: moatData.catalysts,
+              verdict: moatData.verdict,
+              confidence: moatData.confidence,
+              quantScore: philosophy.total,
+              mosAtAnalysis: iv.marginOfSafety,
+            },
+          }).catch(() => {})
+        }
+      }
+
+      // Combined score: quantitative philosophy + qualitative moat adjustment
+      const combinedScore = philosophy.total + moatAdj
+
+      // Hard veto from moat analysis — avoid companies with no moat and bad management
+      if (moatData?.verdict === 'avoid' && moatData.moatScore < 2) {
+        tradeResults.push({
+          ticker: item.stock.ticker,
+          action: 'VETOED',
+          score: combinedScore,
+          mos: iv.marginOfSafety,
+          reason: `Moat analysis veto: ${moatData.thesis}`,
+          moatScore: moatData.moatScore,
+          thesis: moatData.thesis,
+        })
+        prisma.watchlistItem.update({
+          where: { stockId: item.stockId },
+          data: { lastScore: combinedScore, lastMos: iv.marginOfSafety, lastAction: 'VETOED', lastSkipReason: `Moat veto: ${moatData.thesis.slice(0, 100)}`, lastAnalyzedAt: new Date() },
+        }).catch(() => {})
+        continue
+      }
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        philosophy.total >= stockMinScore &&
+        combinedScore >= stockMinScore &&
         iv.marginOfSafety >= effectiveMinMos
 
       if (!passed) {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-          : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
+          : `Score ${combinedScore} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
         tradeResults.push({
           ticker: item.stock.ticker,
           action,
-          score: philosophy.total,
+          score: combinedScore,
           mos: iv.marginOfSafety,
           grahamNumber: iv.grahamNumber,
           dcfValue: iv.dcfValue,
           reason: skipReason,
+          moatScore: moatData?.moatScore,
+          thesis: moatData?.thesis,
         })
         prisma.watchlistItem.update({
           where: { stockId: item.stockId },
-          data: { lastScore: philosophy.total, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
+          data: { lastScore: combinedScore, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
         }).catch(() => {})
         continue
       }
@@ -596,7 +651,7 @@ export async function POST(request: NextRequest) {
           data: {
             ticker: item.stock.ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}`,
+            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${combinedScore}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}${moatData ? ` | Moat: ${moatData.moatScore}/10 (${moatData.moatType})` : ''}`,
             severity: 'buy',
           },
         })
@@ -609,12 +664,16 @@ export async function POST(request: NextRequest) {
           dollarAmount: allocation.dollarAmount,
           positionPct: allocation.positionPct,
           score: philosophy.total,
+          combinedScore,
           mos: iv.marginOfSafety,
           conviction: philosophy.conviction,
           rationale: allocation.rationale,
           grahamNumber: iv.grahamNumber,
           dcfValue: iv.dcfValue,
           intrinsicValue: iv.intrinsicValue,
+          moatScore: moatData?.moatScore,
+          moatType: moatData?.moatType,
+          thesis: moatData?.thesis,
         })
         await Promise.all([
           sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
