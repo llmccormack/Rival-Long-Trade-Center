@@ -127,6 +127,9 @@ model WatchlistItem {
   lastAction      String?   // 'SKIP' | 'VETOED' | 'PAPER_BUY' | 'QUEUED_LIVE'
   lastSkipReason  String?
   lastAnalyzedAt  DateTime?
+
+  @@index([lastScore])
+  @@index([isActive, lastScore])
 }
 
 model PortfolioItem {

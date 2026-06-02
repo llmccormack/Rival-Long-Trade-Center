@@ -11,52 +11,72 @@ const WatchlistPostSchema = z.object({
   notes: z.string().max(500).optional(),
 })
 
-export async function GET() {
-  let items: any[]
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url)
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '100'), 500)
+  const offset = parseInt(searchParams.get('offset') ?? '0')
+  const search = searchParams.get('search') ?? ''
+
   try {
-    items = await prisma.watchlistItem.findMany({
-      where: { isActive: true },
-      include: {
-        stock: {
-          include: {
-            intrinsicValues: { orderBy: { calculatedAt: 'desc' }, take: 1 },
+    // Build where clause
+    const where: any = { isActive: true }
+    if (search) {
+      where.stock = {
+        OR: [
+          { ticker: { contains: search.toUpperCase() } },
+          { name: { contains: search, mode: 'insensitive' } },
+        ]
+      }
+    }
+
+    const [items, total] = await Promise.all([
+      prisma.watchlistItem.findMany({
+        where,
+        include: {
+          stock: {
+            include: {
+              intrinsicValues: { orderBy: { calculatedAt: 'desc' }, take: 1 },
+            },
           },
         },
-      },
-      orderBy: [
-        { lastScore: { sort: 'desc', nulls: 'last' } },
-        { lastMos: { sort: 'desc', nulls: 'last' } },
-        { addedAt: 'desc' },
-      ],
+        orderBy: [
+          { lastScore: { sort: 'desc', nulls: 'last' } },
+          { lastMos: { sort: 'desc', nulls: 'last' } },
+          { addedAt: 'desc' },
+        ],
+        take: limit,
+        skip: offset,
+      }),
+      prisma.watchlistItem.count({ where }),
+    ])
+
+    const enriched = items.map((item) => {
+      const iv = item.stock.intrinsicValues?.[0]
+      return {
+        id: item.id,
+        ticker: item.stock.ticker,
+        name: item.stock.name,
+        sector: item.stock.sector,
+        currentPrice: iv?.currentPrice ?? 0,
+        targetPrice: item.targetPrice,
+        intrinsicValue: iv?.intrinsicValue ?? undefined,
+        marginOfSafety: iv?.marginOfSafety ?? undefined,
+        isBuySignal: iv?.isBuySignal ?? false,
+        addedAt: item.addedAt,
+        notes: item.notes,
+        // Last autopilot analysis results
+        lastScore: item.lastScore ?? undefined,
+        lastMos: item.lastMos ?? undefined,
+        lastAction: item.lastAction ?? undefined,
+        lastSkipReason: item.lastSkipReason ?? undefined,
+        lastAnalyzedAt: item.lastAnalyzedAt ?? undefined,
+      }
     })
+
+    return Response.json({ items: enriched, total, limit, offset })
   } catch {
-    return Response.json([], { status: 200 })
+    return Response.json({ items: [], total: 0, limit, offset }, { status: 200 })
   }
-
-  const enriched = items.map((item) => {
-    const iv = item.stock.intrinsicValues?.[0]
-    return {
-      id: item.id,
-      ticker: item.stock.ticker,
-      name: item.stock.name,
-      sector: item.stock.sector,
-      currentPrice: iv?.currentPrice ?? 0,
-      targetPrice: item.targetPrice,
-      intrinsicValue: iv?.intrinsicValue ?? undefined,
-      marginOfSafety: iv?.marginOfSafety ?? undefined,
-      isBuySignal: iv?.isBuySignal ?? false,
-      addedAt: item.addedAt,
-      notes: item.notes,
-      // Last autopilot analysis results
-      lastScore: item.lastScore ?? undefined,
-      lastMos: item.lastMos ?? undefined,
-      lastAction: item.lastAction ?? undefined,
-      lastSkipReason: item.lastSkipReason ?? undefined,
-      lastAnalyzedAt: item.lastAnalyzedAt ?? undefined,
-    }
-  })
-
-  return Response.json(enriched)
 }
 
 export async function POST(request: NextRequest) {

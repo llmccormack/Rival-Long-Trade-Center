@@ -52,6 +52,35 @@ export async function GET(
       orderBy: { generatedAt: 'desc' },
     }).catch(() => null)
 
+    // Trigger async moat analysis in background if none exists and fundamentals are available
+    if (!moatAnalysis && fundamentals.price > 0) {
+      const news = await getTickerNews(ticker.toUpperCase()).catch(() => null)
+      const philosophy = scoreBuyDecision(fundamentals, criteria, intrinsicValue, news ?? undefined)
+      import('@/lib/ai/moat-analysis').then(({ analyzeMoat }) => {
+        analyzeMoat(ticker.toUpperCase(), fundamentals.name, philosophy.total, intrinsicValue.marginOfSafety)
+          .then(analysis => {
+            if (analysis) {
+              prisma.moatAnalysis.create({
+                data: {
+                  ticker: ticker.toUpperCase(),
+                  companyName: fundamentals.name,
+                  moatScore: analysis.moatScore,
+                  moatType: analysis.moatType,
+                  moatSources: analysis.moatSources,
+                  managementScore: analysis.managementScore,
+                  businessQuality: analysis.businessQuality,
+                  thesis: analysis.thesis,
+                  keyRisks: analysis.keyRisks,
+                  catalysts: analysis.catalysts,
+                  verdict: analysis.verdict,
+                  confidence: analysis.confidence,
+                },
+              }).catch(() => {})
+            }
+          })
+      }).catch(() => {})
+    }
+
     return Response.json({ ticker: ticker.toUpperCase(), fundamentals, criteria, intrinsicValue, moatAnalysis })
   } catch (err: any) {
     return Response.json(

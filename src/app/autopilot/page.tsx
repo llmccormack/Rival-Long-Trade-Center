@@ -110,6 +110,122 @@ const ACTION_STYLE: Record<string, string> = {
   ERROR:       'bg-red-900/30 text-red-500 border-red-900',
 }
 
+function DecisionTable({
+  decisions,
+  expanded,
+  setExpanded,
+  dynamicMinScore,
+}: {
+  decisions: RunResult['results']
+  expanded: string | null
+  setExpanded: (v: string | null) => void
+  dynamicMinScore: number
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-zinc-800">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-zinc-800 bg-zinc-900/80">
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Action</th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Score</th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">MOS</th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Reason</th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
+          {decisions.flatMap((d) => {
+            const rows = [
+              <tr
+                key={d.ticker}
+                className="hover:bg-zinc-800/40 cursor-pointer transition-colors"
+                onClick={() => setExpanded(expanded === d.ticker ? null : d.ticker)}
+              >
+                <td className="px-4 py-3">
+                  <span className="font-mono text-sm font-bold text-zinc-100">{d.ticker}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn('rounded border px-2 py-0.5 text-[11px] font-bold tracking-wide', ACTION_STYLE[d.action] ?? 'text-zinc-500')}>
+                    {d.action}
+                  </span>
+                </td>
+                <td className="px-4 py-3 hidden sm:table-cell">
+                  {d.score != null ? (
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-16 rounded-full bg-zinc-800 overflow-hidden">
+                        <div
+                          className={cn('h-full rounded-full', d.score >= dynamicMinScore ? 'bg-violet-500' : 'bg-zinc-600')}
+                          style={{ width: `${d.score}%` }}
+                        />
+                      </div>
+                      <span className={cn('font-mono text-xs tabular-nums', d.score >= dynamicMinScore ? 'text-violet-400' : 'text-zinc-600')}>{d.score}</span>
+                    </div>
+                  ) : <span className="text-zinc-700">—</span>}
+                </td>
+                <td className="px-4 py-3 hidden sm:table-cell">
+                  {d.mos != null ? (
+                    <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                      {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
+                    </span>
+                  ) : <span className="text-zinc-700">—</span>}
+                </td>
+                <td className="px-4 py-3 max-w-xs">
+                  <span className="text-xs text-zinc-500 line-clamp-1">{d.reason ?? `Score ${d.score} · MOS ${d.mos?.toFixed(1)}%`}</span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <svg viewBox="0 0 20 20" fill="currentColor" className={cn('h-3.5 w-3.5 ml-auto text-zinc-700 transition-transform', expanded === d.ticker ? 'rotate-180' : '')}>
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </td>
+              </tr>,
+            ]
+            if (expanded === d.ticker) {
+              rows.push(
+                <tr key={`${d.ticker}-detail`} className="bg-zinc-900/80">
+                  <td colSpan={6} className="px-4 py-3 border-t border-zinc-800/50">
+                    <div className="font-mono text-xs text-zinc-400 leading-5">
+                      <span className="text-zinc-600">AUDIT TRAIL / {d.ticker}</span><br />
+                      {'>'} Action: {d.action}<br />
+                      {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction.toUpperCase().replace('_', ' ')})` : ''}<br /></>}
+                      {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 30 ? '✓ PASS' : '✗ FAIL'}<br /></>}
+                      {(d.grahamNumber || d.dcfValue) && (
+                        <>
+                          {'>'} Intrinsic value breakdown:<br />
+                          <div className="ml-4 mt-1 mb-1 grid grid-cols-2 gap-3 max-w-sm">
+                            {d.grahamNumber && (
+                              <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
+                                <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Graham Number</div>
+                                <div className="text-zinc-300 font-bold">${d.grahamNumber.toFixed(2)}</div>
+                                <div className="text-[9px] text-zinc-700">√(22.5 × EPS × BV)</div>
+                              </div>
+                            )}
+                            {d.dcfValue && (
+                              <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
+                                <div className="text-[9px] text-zinc-600 uppercase tracking-widest">DCF Value</div>
+                                <div className="text-zinc-300 font-bold">${d.dcfValue.toFixed(2)}</div>
+                                <div className="text-[9px] text-zinc-700">10yr owner earnings</div>
+                              </div>
+                            )}
+                          </div>
+                          {d.intrinsicValue && <>{`>`} Composite IV: ${d.intrinsicValue.toFixed(2)} {d.price ? `(current: $${d.price.toFixed(2)})` : ''}<br /></>}
+                        </>
+                      )}
+                      {d.shares != null && <>{`>`} Shares: {d.shares} @ ${d.price?.toFixed(2)}<br /></>}
+                      {d.reason && <>{`>`} {d.reason}<br /></>}
+                    </div>
+                  </td>
+                </tr>
+              )
+            }
+            return rows
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function AutopilotPage() {
   const { mode, setMode, isPaper } = useTradingMode()
   const [autopilotOn, setAutopilotOn] = useState(false)
@@ -124,6 +240,7 @@ export default function AutopilotPage() {
   const [fullRunning, setFullRunning] = useState(false)
   const [fullRunStep, setFullRunStep] = useState(0)
   const [fullRunResult, setFullRunResult] = useState<any>(null)
+  const [skippedExpanded, setSkippedExpanded] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -186,6 +303,19 @@ export default function AutopilotPage() {
   const decisions = lastRun?.results ?? []
   const buys = decisions.filter(d => d.action.includes('BUY')).length
   const blocked = decisions.filter(d => d.action === 'VETOED' || d.action === 'ERROR').length
+
+  // Near-miss: scored but just below the dynamic threshold
+  const dynamicMinScore = lastRun?.macro?.effectiveMinScore ?? minScore
+  const buyDecisions = decisions.filter(d => d.action.includes('BUY'))
+  const nearMisses = decisions.filter(d =>
+    (d.action === 'SKIP' || d.action === 'VETOED') &&
+    d.score != null &&
+    d.score >= 35 &&
+    d.score < dynamicMinScore
+  )
+  const skippedDecisions = decisions.filter(d =>
+    d.action === 'SKIP' || d.action === 'VETOED' || d.action === 'ERROR'
+  ).filter(d => !(d.score != null && d.score >= 35 && d.score < dynamicMinScore))
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
@@ -339,9 +469,9 @@ export default function AutopilotPage() {
               <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Autopilot Running</div>
               <div className="flex items-center gap-0">
                 {[
-                  { n: 1, label: 'Reviewing positions' },
-                  { n: 2, label: 'Evaluating watchlist' },
-                  { n: 3, label: 'Recommending buys' },
+                  { n: 1, label: 'Discovering stocks from SEC EDGAR + Yahoo…' },
+                  { n: 2, label: 'Quick-screening value candidates…' },
+                  { n: 3, label: 'Deep analysis + moat scoring…' },
                 ].map(({ n, label }, i) => (
                   <div key={n} className="flex items-center gap-0">
                     <div className={cn(
@@ -604,117 +734,93 @@ export default function AutopilotPage() {
         </div>
       </div>
 
-      {/* Decision log */}
+      {/* Decision log — grouped by category */}
       {decisions.length > 0 ? (
-        <div>
-          <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
             <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Last Run Decisions</h2>
             <span className="text-[11px] text-zinc-700">
               {lastRun?.ranAt ? new Date(lastRun.ranAt).toLocaleString() : ''} · {isPaper ? 'Paper' : 'Live'} mode
             </span>
           </div>
-          <div className="overflow-x-auto rounded-xl border border-zinc-800">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/80">
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Action</th>
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Score</th>
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">MOS</th>
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Reason</th>
-                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
-                {decisions.flatMap((d) => {
-                  const rows = [
-                    <tr
-                      key={d.ticker}
-                      className="hover:bg-zinc-800/40 cursor-pointer transition-colors"
-                      onClick={() => setExpanded(expanded === d.ticker ? null : d.ticker)}
-                    >
-                      <td className="px-4 py-3">
-                        <span className="font-mono text-sm font-bold text-zinc-100">{d.ticker}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={cn('rounded border px-2 py-0.5 text-[11px] font-bold tracking-wide', ACTION_STYLE[d.action] ?? 'text-zinc-500')}>
-                          {d.action}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        {d.score != null ? (
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-16 rounded-full bg-zinc-800 overflow-hidden">
-                              <div
-                                className={cn('h-full rounded-full', d.score >= 55 ? 'bg-violet-500' : 'bg-zinc-600')}
-                                style={{ width: `${d.score}%` }}
-                              />
-                            </div>
-                            <span className={cn('font-mono text-xs tabular-nums', d.score >= 55 ? 'text-violet-400' : 'text-zinc-600')}>{d.score}</span>
-                          </div>
-                        ) : <span className="text-zinc-700">—</span>}
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        {d.mos != null ? (
-                          <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
-                            {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
+
+          {/* Buys — highlighted section */}
+          {buyDecisions.length > 0 && (
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-emerald-400">
+                Buys ({buyDecisions.length})
+              </div>
+              <DecisionTable decisions={buyDecisions} expanded={expanded} setExpanded={setExpanded} dynamicMinScore={dynamicMinScore} />
+            </div>
+          )}
+
+          {/* Near misses */}
+          {nearMisses.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-widest text-amber-400">
+                  Near Misses ({nearMisses.length})
+                </span>
+                <span className="text-[10px] text-zinc-600">— scored {'>'}35 but below gate of {dynamicMinScore}</span>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-amber-900/30">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-zinc-900/80">
+                      <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
+                      <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Score</th>
+                      <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">MOS</th>
+                      <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Gap</th>
+                      <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 bg-amber-950/5">
+                    {nearMisses.map(d => (
+                      <tr key={d.ticker} className="hover:bg-zinc-800/20 transition-colors">
+                        <td className="px-4 py-3 font-mono text-sm font-bold text-zinc-100">{d.ticker}</td>
+                        <td className="px-4 py-3">
+                          <span className="font-mono text-amber-400 font-semibold">{d.score}</span>
+                        </td>
+                        <td className="px-4 py-3 hidden sm:table-cell">
+                          {d.mos != null ? (
+                            <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                              {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-[11px] rounded border border-amber-800/50 bg-amber-900/20 text-amber-400 px-1.5 py-0.5 font-medium">
+                            {d.score != null ? `${dynamicMinScore - d.score} pts from qualifying` : '—'}
                           </span>
-                        ) : <span className="text-zinc-700">—</span>}
-                      </td>
-                      <td className="px-4 py-3 max-w-xs">
-                        <span className="text-xs text-zinc-500 line-clamp-1">{d.reason ?? `Score ${d.score} · MOS ${d.mos?.toFixed(1)}%`}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <svg viewBox="0 0 20 20" fill="currentColor" className={cn('h-3.5 w-3.5 ml-auto text-zinc-700 transition-transform', expanded === d.ticker ? 'rotate-180' : '')}>
-                          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                      </td>
-                    </tr>,
-                  ]
-                  if (expanded === d.ticker) {
-                    rows.push(
-                      <tr key={`${d.ticker}-detail`} className="bg-zinc-900/80">
-                        <td colSpan={6} className="px-4 py-3 border-t border-zinc-800/50">
-                          <div className="font-mono text-xs text-zinc-400 leading-5">
-                            <span className="text-zinc-600">AUDIT TRAIL / {d.ticker}</span><br />
-                            {'>'} Action: {d.action}<br />
-                            {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction.toUpperCase().replace('_', ' ')})` : ''}<br /></>}
-                            {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 30 ? '✓ PASS' : '✗ FAIL'}<br /></>}
-                            {/* Two-column IV projection */}
-                            {(d.grahamNumber || d.dcfValue) && (
-                              <>
-                                {'>'} Intrinsic value breakdown:<br />
-                                <div className="ml-4 mt-1 mb-1 grid grid-cols-2 gap-3 max-w-sm">
-                                  {d.grahamNumber && (
-                                    <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
-                                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Graham Number</div>
-                                      <div className="text-zinc-300 font-bold">${d.grahamNumber.toFixed(2)}</div>
-                                      <div className="text-[9px] text-zinc-700">√(22.5 × EPS × BV)</div>
-                                    </div>
-                                  )}
-                                  {d.dcfValue && (
-                                    <div className="rounded border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5">
-                                      <div className="text-[9px] text-zinc-600 uppercase tracking-widest">DCF Value</div>
-                                      <div className="text-zinc-300 font-bold">${d.dcfValue.toFixed(2)}</div>
-                                      <div className="text-[9px] text-zinc-700">10yr owner earnings</div>
-                                    </div>
-                                  )}
-                                </div>
-                                {d.intrinsicValue && <>{`>`} Composite IV: ${d.intrinsicValue.toFixed(2)} {d.price ? `(current: $${d.price.toFixed(2)})` : ''}<br /></>}
-                              </>
-                            )}
-                            {d.shares != null && <>{`>`} Shares: {d.shares} @ ${d.price?.toFixed(2)}<br /></>}
-                            {d.reason && <>{`>`} {d.reason}<br /></>}
-                          </div>
+                        </td>
+                        <td className="px-4 py-3 max-w-xs">
+                          <span className="text-xs text-zinc-500 line-clamp-1">{d.reason ?? ''}</span>
                         </td>
                       </tr>
-                    )
-                  }
-                  return rows
-                })}
-              </tbody>
-            </table>
-          </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Skipped / Vetoed — collapsed by default */}
+          {skippedDecisions.length > 0 && (
+            <div>
+              <button
+                onClick={() => setSkippedExpanded(v => !v)}
+                className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-zinc-600 hover:text-zinc-400 transition-colors"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" className={cn('h-3.5 w-3.5 transition-transform', skippedExpanded ? 'rotate-90' : '')}>
+                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                </svg>
+                Skipped / Vetoed ({skippedDecisions.length})
+              </button>
+              {skippedExpanded && (
+                <DecisionTable decisions={skippedDecisions} expanded={expanded} setExpanded={setExpanded} dynamicMinScore={dynamicMinScore} />
+              )}
+            </div>
+          )}
         </div>
       ) : !loading && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-6 py-10 text-center">
