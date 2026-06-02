@@ -516,16 +516,29 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      // Tiered thresholds: wide-moat businesses need smaller discounts (Buffett),
+      // no-moat businesses need Graham-level bargains to compensate for fragility.
+      const baseScore = config.minPhilosophyScore ?? 45
+      const baseMos   = config.minMarginOfSafety ?? 15
+      let dynamicMinScore = stockMinScore
+      let dynamicMinMos   = effectiveMinMos
+      if (moatData) {
+        if (moatData.moatScore >= 7)      { dynamicMinScore = Math.max(40, baseScore - 5);  dynamicMinMos = Math.max(10, baseMos - 5) }
+        else if (moatData.moatScore >= 5) { dynamicMinScore = baseScore;                    dynamicMinMos = baseMos }
+        else if (moatData.moatScore >= 3) { dynamicMinScore = Math.min(60, baseScore + 8);  dynamicMinMos = Math.min(25, baseMos + 8) }
+        else                              { dynamicMinScore = Math.min(65, baseScore + 15); dynamicMinMos = Math.min(30, baseMos + 15) }
+      }
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
-        combinedScore >= stockMinScore &&
-        iv.marginOfSafety >= effectiveMinMos
+        combinedScore >= dynamicMinScore &&
+        iv.marginOfSafety >= dynamicMinMos
 
       if (!passed) {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
-          : `Score ${combinedScore} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
+          : `Score ${combinedScore} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}${moatData ? ` | Moat ${moatData.moatScore}/10` : ''}`
         tradeResults.push({
           ticker: item.stock.ticker,
           action,
