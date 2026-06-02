@@ -122,13 +122,20 @@ export default function WatchlistPage() {
           <p className="text-sm text-zinc-600">Add tickers of businesses you understand and want to own at the right price.</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-zinc-800">
+        <div className="overflow-x-auto rounded-xl border border-zinc-800">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900/80">
-                {['Ticker', 'Price', 'Intrinsic Value', 'Buy Target (30% MOS)', 'Margin of Safety', '10yr CAGR', 'Quality', 'Signal', 'Added', ''].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
-                ))}
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Price</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Intrinsic Value</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Buy Target (30% MOS)</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Margin of Safety</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">10yr CAGR</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Quality</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Signal</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Added</th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
@@ -143,10 +150,10 @@ export default function WatchlistPage() {
                   <td className="px-4 py-3 font-mono text-zinc-300">
                     {item.currentPrice > 0 ? formatCurrency(item.currentPrice) : '—'}
                   </td>
-                  <td className="px-4 py-3 font-mono text-zinc-400">
+                  <td className="px-4 py-3 font-mono text-zinc-400 hidden sm:table-cell">
                     {item.intrinsicValue ? formatCurrency(item.intrinsicValue) : '—'}
                   </td>
-                  <td className="px-4 py-3 font-mono text-zinc-500">
+                  <td className="px-4 py-3 font-mono text-zinc-500 hidden sm:table-cell">
                     {item.targetPrice ? formatCurrency(item.targetPrice) : '—'}
                   </td>
                   <td className="px-4 py-3">
@@ -164,14 +171,14 @@ export default function WatchlistPage() {
                       </div>
                     ) : '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden sm:table-cell">
                     {item.expectedCagr10yr != null ? (
                       <span className={cn('font-mono text-sm tabular-nums', item.expectedCagr10yr >= 0.10 ? 'text-emerald-400' : item.expectedCagr10yr >= 0.07 ? 'text-amber-400' : 'text-zinc-600')}>
                         {(item.expectedCagr10yr * 100).toFixed(1)}%
                       </span>
                     ) : '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden sm:table-cell">
                     {item.businessTier ? (() => {
                       const tierCfg: Record<string, { cls: string; short: string }> = {
                         wonderful: { cls: 'text-amber-400', short: '★ WON' },
@@ -192,7 +199,7 @@ export default function WatchlistPage() {
                       <Badge variant="neutral">WAIT</Badge>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-[10px] text-zinc-600">
+                  <td className="px-4 py-3 text-[10px] text-zinc-600 hidden sm:table-cell">
                     {new Date(item.addedAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3">

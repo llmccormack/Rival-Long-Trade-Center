@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { SideNav } from '@/components/ui/SideNav'
@@ -15,10 +15,16 @@ export const metadata: Metadata = {
   description: 'Systematic value investing powered by Graham, Buffett, and Fisher philosophy',
 }
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} dark h-full`}>
-      <body className="flex h-full min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+      <body className="flex h-full min-h-screen bg-zinc-950 text-zinc-100 antialiased overflow-x-hidden">
         <TradingModeProvider>
           <MobileMenuProvider>
             <SideNav />

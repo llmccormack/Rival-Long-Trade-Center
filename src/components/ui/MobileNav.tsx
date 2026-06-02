@@ -16,12 +16,14 @@ const NAV = [
   { href: '/portfolio',   label: 'Portfolio',         icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
   { href: '/performance', label: 'Performance',       icon: 'M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z' },
   { href: '/philosophy',  label: 'Philosophy Engine', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+  { href: '/chat',        label: 'AI Analyst',        icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
   { href: '/settings',    label: 'Settings',          icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 ]
 
 const BOTTOM_TABS = [
-  { href: '/',          label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+  { href: '/',          label: 'Home',      icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
   { href: '/autopilot', label: 'Autopilot', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
+  { href: '/chat',      label: 'AI',        icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z' },
   { href: '/portfolio', label: 'Portfolio', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
   { href: '/watchlist', label: 'Watchlist', icon: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z' },
 ]
@@ -50,7 +52,7 @@ export function MobileNav() {
       {/* ── Slide-in drawer ──────────────────────────────────────────── */}
       <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-zinc-950 border-r border-zinc-800/80 transition-transform duration-300 md:hidden',
+          'fixed inset-y-0 left-0 z-50 w-[280px] flex flex-col bg-zinc-950 border-r border-zinc-800/80 transition-transform duration-300 md:hidden',
           isOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
@@ -124,7 +126,7 @@ export function MobileNav() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-all',
+                  'group flex items-center gap-2.5 rounded-lg px-3 py-3 text-sm transition-all',
                   isActive
                     ? 'bg-violet-600/15 text-zinc-100 border border-violet-600/20'
                     : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'
@@ -166,7 +168,7 @@ export function MobileNav() {
       {/* ── Bottom tab bar ───────────────────────────────────────────── */}
       <nav
         className="fixed bottom-0 inset-x-0 z-30 flex border-t border-zinc-800/80 bg-zinc-950 md:hidden"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {BOTTOM_TABS.map((tab) => {
           const isActive = pathname === tab.href || (tab.href !== '/' && pathname.startsWith(tab.href))
@@ -174,14 +176,17 @@ export function MobileNav() {
             <Link
               key={tab.href}
               href={tab.href}
-              className="flex flex-1 flex-col items-center justify-center gap-1 py-2 transition-colors"
+              className="flex flex-1 flex-col items-center justify-center gap-1 py-2 transition-colors relative"
             >
+              {isActive && (
+                <span className="absolute top-0 inset-x-2 h-0.5 rounded-full bg-violet-500" />
+              )}
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth={isActive ? 2 : 1.5}
-                className={cn('h-5 w-5', isActive ? 'text-violet-400' : 'text-zinc-600')}
+                className={cn('h-6 w-6', isActive ? 'text-violet-400' : 'text-zinc-600')}
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d={tab.icon} />
               </svg>
@@ -197,7 +202,7 @@ export function MobileNav() {
           className="flex flex-1 flex-col items-center justify-center gap-1 py-2 text-zinc-600 transition-colors hover:text-zinc-400"
           aria-label="Open menu"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-6 w-6">
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
           <span className="text-[10px] font-medium">More</span>

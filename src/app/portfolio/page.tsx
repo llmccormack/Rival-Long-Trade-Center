@@ -101,7 +101,7 @@ export default async function PortfolioPage() {
       {closedPositions.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-zinc-300 mb-3">Closed Positions</h2>
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="rounded-xl border border-zinc-800 overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">

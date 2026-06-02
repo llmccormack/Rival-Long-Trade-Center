@@ -248,7 +248,7 @@ export default function AutopilotPage() {
           <button
             onClick={runNow}
             disabled={running || fullRunning}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-500 disabled:opacity-40 transition-colors"
+            className="w-full sm:w-auto rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-500 disabled:opacity-40 transition-colors"
           >
             {running ? 'Running…' : 'Run Watchlist'}
           </button>
@@ -256,7 +256,7 @@ export default function AutopilotPage() {
           <button
             onClick={runFull}
             disabled={running || fullRunning}
-            className="relative flex items-center gap-2 rounded-lg border border-violet-600/60 bg-violet-600/10 px-5 py-2 text-sm font-semibold text-violet-300 hover:bg-violet-600/20 disabled:opacity-40 transition-all"
+            className="relative w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-violet-600/60 bg-violet-600/10 px-5 py-2 text-sm font-semibold text-violet-300 hover:bg-violet-600/20 disabled:opacity-40 transition-all"
           >
             {fullRunning ? (
               <>
@@ -613,13 +613,16 @@ export default function AutopilotPage() {
               {lastRun?.ranAt ? new Date(lastRun.ranAt).toLocaleString() : ''} · {isPaper ? 'Paper' : 'Live'} mode
             </span>
           </div>
-          <div className="overflow-hidden rounded-xl border border-zinc-800">
+          <div className="overflow-x-auto rounded-xl border border-zinc-800">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/80">
-                  {['Ticker', 'Action', 'Score', 'MOS', 'Reason', ''].map(h => (
-                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
-                  ))}
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Action</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Score</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">MOS</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Reason</th>
+                  <th className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
@@ -638,7 +641,7 @@ export default function AutopilotPage() {
                           {d.action}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 hidden sm:table-cell">
                         {d.score != null ? (
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-16 rounded-full bg-zinc-800 overflow-hidden">
@@ -651,7 +654,7 @@ export default function AutopilotPage() {
                           </div>
                         ) : <span className="text-zinc-700">—</span>}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 hidden sm:table-cell">
                         {d.mos != null ? (
                           <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
                             {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
