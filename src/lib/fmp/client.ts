@@ -366,6 +366,39 @@ export async function screenStocks(params: {
   })
 }
 
+// ─── Quick Screen (2 FMP calls) ───────────────────────────────────────────────
+// Used in Phase 1 of two-phase analysis to pre-filter 100 stocks/day cheaply.
+// Returns null if the stock fails basic value criteria or has no price data.
+
+export interface QuickScreenResult {
+  ticker: string
+  price: number
+  marketCap: number
+  pe: number | null
+  pb: number | null
+  roe: number | null
+  debtToEquity: number | null
+  currentRatio: number | null
+}
+
+export async function quickScreen(ticker: string): Promise<QuickScreenResult | null> {
+  const [quote, metrics] = await Promise.all([
+    getQuote(ticker),
+    getKeyMetrics(ticker, 1),
+  ])
+  if (!quote || quote.price <= 0) return null
+  return {
+    ticker: ticker.toUpperCase(),
+    price: quote.price,
+    marketCap: quote.marketCap ?? 0,
+    pe: metrics[0]?.peRatio ?? quote.pe ?? null,
+    pb: metrics[0]?.pbRatio ?? null,
+    roe: metrics[0]?.roe ?? null,
+    debtToEquity: metrics[0]?.debtToEquity ?? null,
+    currentRatio: metrics[0]?.currentRatio ?? null,
+  }
+}
+
 // ─── Composite Fundamentals ───────────────────────────────────────────────────
 
 export async function getCompleteFundamentals(ticker: string): Promise<StockFundamentals> {

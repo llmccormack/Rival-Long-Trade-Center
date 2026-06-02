@@ -174,7 +174,7 @@ model AutopilotConfig {
   isEnabled         Boolean  @default(true)
   mode              String   @default("paper")   // "paper" | "live"
   minPhilosophyScore Int     @default(55)
-  minMarginOfSafety  Float   @default(30)
+  minMarginOfSafety  Float   @default(20)
   maxPositionPct     Float   @default(10)
   totalCapital       Float   @default(10000)
   maxPositions       Int     @default(15)

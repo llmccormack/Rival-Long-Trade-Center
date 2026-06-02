@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
-import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen } from '@/lib/fmp/client'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
@@ -354,9 +354,42 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const watchlist = candidates.slice(0, dailyLimit)
-
+  // Two-phase analysis:
+  // Phase 1 — quick screen (2 FMP calls each) up to 4× dailyLimit candidates
+  // Phase 2 — full deep analysis (7 FMP calls each) only on Phase 1 survivors
+  // This gives ~100 stocks screened per day on the free FMP tier (250 calls/day)
   const tradeResults: any[] = []
+  const screenPool = candidates.slice(0, dailyLimit * 4)
+  const phase1Results = await Promise.allSettled(
+    screenPool.map(item => quickScreen(item.stock.ticker).then(r => ({ item, quick: r })))
+  )
+
+  const deepAnalysisCandidates = phase1Results
+    .filter((r): r is PromiseFulfilledResult<{ item: typeof candidates[0]; quick: NonNullable<Awaited<ReturnType<typeof quickScreen>>> }> =>
+      r.status === 'fulfilled' && r.value.quick !== null && r.value.quick.price > 0
+    )
+    .map(r => r.value)
+    .filter(({ quick }) => {
+      // Must pass at least one value signal to warrant full analysis
+      const hasValuePE = quick.pe !== null && quick.pe > 0 && quick.pe < 35
+      const hasValuePB = quick.pb !== null && quick.pb > 0 && quick.pb < 4
+      const hasROE = quick.roe !== null && quick.roe > 0.05
+      return hasValuePE || hasValuePB || (hasROE && quick.marketCap > 0)
+    })
+    .slice(0, dailyLimit)
+
+  // Mark Phase 1 failures as skipped
+  for (const r of phase1Results) {
+    if (r.status === 'fulfilled' && r.value.quick === null) {
+      tradeResults.push({ ticker: r.value.item.stock.ticker, action: 'SKIP', reason: 'No price data (Phase 1)' })
+      prisma.watchlistItem.update({
+        where: { stockId: r.value.item.stockId },
+        data: { lastAction: 'SKIP', lastSkipReason: 'No price data', lastAnalyzedAt: new Date() },
+      }).catch(() => {})
+    }
+  }
+
+  const watchlist = deepAnalysisCandidates.map(d => d.item)
 
   for (const item of watchlist) {
     try {
