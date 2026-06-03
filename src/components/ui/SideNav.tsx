@@ -103,10 +103,10 @@ export function SideNav() {
               key={item.href}
               href={item.href}
               className={cn(
-                'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-all',
+                'group flex items-center gap-2.5 rounded-lg text-sm transition-all',
                 isActive
-                  ? 'bg-violet-600/15 text-zinc-100 border border-violet-600/20'
-                  : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'
+                  ? 'bg-violet-600/15 text-violet-300 border-l-2 border-violet-500 px-4 py-2.5'
+                  : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300 px-3 py-2'
               )}
             >
               <svg

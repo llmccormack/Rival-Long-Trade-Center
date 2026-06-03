@@ -14,18 +14,24 @@ async function withTimeout<T>(promise: Promise<T>, fallback: T, ms = 2000): Prom
 
 async function getDashboardData() {
   let portfolioItems: any[] = []
+  let paperPortfolioItems: any[] = []
   let watchlistCount = 0, alertCount = 0, screenPasses = 0
   let autopilotConfig: any = null
   let topOpportunities: any[] = []
 
   try {
-    ;[portfolioItems, watchlistCount, alertCount, screenPasses, autopilotConfig, topOpportunities] = await Promise.all([
+    ;[portfolioItems, paperPortfolioItems, watchlistCount, alertCount, screenPasses, autopilotConfig, topOpportunities] = await Promise.all([
       withTimeout(prisma.portfolioItem.findMany({
         include: {
           stock: {
             include: { intrinsicValues: { orderBy: { calculatedAt: 'desc' }, take: 1 } },
           },
         },
+      }), []),
+      withTimeout(prisma.paperPortfolioItem.findMany({
+        where: { isOpen: true },
+        include: { stock: { include: { intrinsicValues: { orderBy: { calculatedAt: 'desc' }, take: 1 } } } },
+        take: 10,
       }), []),
       withTimeout(prisma.watchlistItem.count({ where: { isActive: true } }), 0),
       withTimeout(prisma.alert.count({ where: { isRead: false } }), 0),
@@ -73,11 +79,29 @@ async function getDashboardData() {
     }
   })
 
-  return { positions, watchlistCount, alertCount, screenPasses, autopilotConfig, opportunities }
+  const paperPositions = paperPortfolioItems.map((h: any) => {
+    const iv = h.stock.intrinsicValues?.[0]
+    const currentPrice = iv?.intrinsicValue ? h.avgCostBasis : h.avgCostBasis
+    const currentValue = h.shares * h.avgCostBasis
+    const gainLossPct = h.entryPrice > 0 ? ((h.avgCostBasis - h.entryPrice) / h.entryPrice) * 100 : 0
+    return {
+      id: h.id,
+      ticker: h.stock.ticker,
+      name: h.stock.name,
+      shares: h.shares,
+      entryPrice: h.entryPrice ?? h.avgCostBasis,
+      avgCostBasis: h.avgCostBasis,
+      currentPrice: iv?.intrinsicValue ?? h.avgCostBasis,
+      currentValue,
+      gainLossPct,
+    }
+  })
+
+  return { positions, paperPositions, watchlistCount, alertCount, screenPasses, autopilotConfig, opportunities }
 }
 
 export default async function DashboardPage() {
-  const { positions, watchlistCount, alertCount, screenPasses, autopilotConfig, opportunities } = await getDashboardData()
+  const { positions, paperPositions, watchlistCount, alertCount, screenPasses, autopilotConfig, opportunities } = await getDashboardData()
 
   const totalValue = positions.reduce((s, p) => s + p.currentValue, 0)
   const avgMOS = positions.filter(p => p.marginOfSafety != null).length > 0
@@ -156,13 +180,22 @@ export default async function DashboardPage() {
       </div>
 
       {/* Welcome bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-lg font-semibold text-zinc-100">Command Center</h1>
           <p className="text-xs text-zinc-600 mt-0.5">
             Systematic value investing — Graham grounded, Buffett refined, Fisher completed.
           </p>
         </div>
+        <Link
+          href="/autopilot"
+          className="flex items-center gap-2 rounded-lg border border-violet-600/60 bg-violet-600/10 px-5 py-2 text-sm font-semibold text-violet-300 hover:bg-violet-600/20 transition-all"
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+            <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+          </svg>
+          Full Auto Run
+        </Link>
       </div>
 
       {/* Section 2: Top Opportunities */}
@@ -322,6 +355,46 @@ export default async function DashboardPage() {
             <AlertsFeed />
           </Suspense>
         </div>
+      </div>
+
+      {/* Paper Positions */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Paper Portfolio</h2>
+          <Link href="/autopilot" className="text-[11px] text-zinc-600 hover:text-violet-400 transition-colors">
+            View autopilot →
+          </Link>
+        </div>
+        {paperPositions.length === 0 ? (
+          <div className="text-center py-8 text-zinc-500 text-sm rounded-xl border border-zinc-800 bg-zinc-900/40">
+            No paper positions yet — the autopilot will enter trades when it finds qualifying stocks
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-zinc-800">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900/80">
+                  {['Ticker', 'Shares', 'Entry', 'Current IV', 'Return %'].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/40">
+                {paperPositions.map((p: any) => (
+                  <tr key={p.id} className="hover:bg-zinc-800/20 transition-colors">
+                    <td className="px-4 py-3 font-mono font-bold text-zinc-100">{p.ticker}</td>
+                    <td className="px-4 py-3 font-mono text-zinc-400">{p.shares}</td>
+                    <td className="px-4 py-3 font-mono text-zinc-500">${p.entryPrice.toFixed(2)}</td>
+                    <td className="px-4 py-3 font-mono text-zinc-300">${p.currentPrice.toFixed(2)}</td>
+                    <td className={cn('px-4 py-3 font-mono text-xs', p.gainLossPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {p.gainLossPct >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Philosophy snapshot */}

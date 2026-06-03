@@ -5,44 +5,6 @@ import { useTradingMode } from '@/contexts/TradingMode'
 import { cn } from '@/lib/utils'
 import { PortfolioReviewPanel } from '@/components/ui/PortfolioReviewPanel'
 
-const PHILOSOPHY_GATES = [
-  {
-    step: '01',
-    title: 'Hard Veto Check',
-    desc: 'Any single principle veto permanently blocks the trade regardless of score',
-    examples: ['Negative owner earnings', 'Current ratio < 1.0', 'Debt/equity > 2×', 'Management fraud flag'],
-    color: 'text-red-400',
-    border: 'border-red-900/50',
-    bg: 'bg-red-900/10',
-  },
-  {
-    step: '02',
-    title: 'Philosophy Score Gate',
-    desc: 'Weighted scoring across 130+ principles across Graham, Buffett, and Fisher',
-    examples: ['Must score ≥ 55 / 100 to proceed', 'Category scores checked independently', 'Audit trail generated for every principle'],
-    color: 'text-violet-400',
-    border: 'border-violet-900/50',
-    bg: 'bg-violet-900/10',
-  },
-  {
-    step: '03',
-    title: 'Margin of Safety Gate',
-    desc: 'Graham Ch.20 — The central concept. Consistent application.',
-    examples: ['Must show ≥ 30% discount to intrinsic value', 'IV = 40% Graham Number + 60% DCF', 'Owner Earnings used as DCF input'],
-    color: 'text-emerald-400',
-    border: 'border-emerald-900/50',
-    bg: 'bg-emerald-900/10',
-  },
-  {
-    step: '04',
-    title: 'Conviction-Scaled Sizing',
-    desc: 'Position size scales with philosophy conviction level',
-    examples: ['Strong Buy → 100% of 10% cap', 'Buy → 70% of 10% cap', 'Watchlist → 50% of 10% cap'],
-    color: 'text-amber-400',
-    border: 'border-amber-900/50',
-    bg: 'bg-amber-900/10',
-  },
-]
 
 interface RunResult {
   ranAt: string
@@ -241,6 +203,7 @@ export default function AutopilotPage() {
   const [fullRunStep, setFullRunStep] = useState(0)
   const [fullRunResult, setFullRunResult] = useState<any>(null)
   const [skippedExpanded, setSkippedExpanded] = useState(false)
+  const [showGates, setShowGates] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -660,77 +623,74 @@ export default function AutopilotPage() {
         )
       })()}
 
-      {/* Parameters + Gates side by side */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-          <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Risk Parameters</h2>
-          <div className="space-y-5">
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-sm text-zinc-400">Min Philosophy Score</label>
-                <span className="text-sm font-mono font-bold text-violet-400">{minScore}</span>
-              </div>
-              <input
-                type="range" min={40} max={80} value={minScore}
-                onChange={e => setMinScore(Number(e.target.value))}
-                className="w-full accent-violet-600"
-              />
-              <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
-                <span>Permissive (40)</span><span>Strict (80)</span>
-              </div>
+      {/* Risk Parameters */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Risk Parameters</h2>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <div className="flex justify-between mb-1.5">
+              <label className="text-sm text-zinc-400">Min Philosophy Score</label>
+              <span className="text-sm font-mono font-bold text-violet-400">{minScore}</span>
             </div>
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-sm text-zinc-400">Min Margin of Safety</label>
-                <span className="text-sm font-mono font-bold text-emerald-400">{minMOS}%</span>
-              </div>
-              <input
-                type="range" min={15} max={50} value={minMOS}
-                onChange={e => setMinMOS(Number(e.target.value))}
-                className="w-full accent-emerald-600"
-              />
-              <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
-                <span>Flexible (15%)</span><span>Conservative (50%)</span>
-              </div>
-            </div>
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
-              {[
-                { label: 'Max Position Size', value: '10%', note: 'Graham/Dodd hard limit' },
-                { label: 'Principles Active', value: '130+', note: 'Graham + Buffett + Fisher' },
-                { label: 'Hard Veto Count', value: '4', note: 'Any one blocks trade' },
-              ].map(({ label, value, note }) => (
-                <div key={label} className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-zinc-400">{label}</div>
-                    <div className="text-[10px] text-zinc-700">{note}</div>
-                  </div>
-                  <span className="font-mono text-sm font-bold text-zinc-300">{value}</span>
-                </div>
-              ))}
+            <input
+              type="range" min={40} max={80} value={minScore}
+              onChange={e => setMinScore(Number(e.target.value))}
+              className="w-full accent-violet-600"
+            />
+            <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+              <span>Permissive (40)</span><span>Strict (80)</span>
             </div>
           </div>
-        </div>
-
-        <div className="lg:col-span-2 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-          <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Philosophy Decision Gates</h2>
-          <div className="space-y-3">
-            {PHILOSOPHY_GATES.map((gate) => (
-              <div key={gate.step} className={cn('rounded-lg border p-4', gate.border, gate.bg)}>
-                <div className="flex items-start gap-3">
-                  <span className={cn('font-mono text-xs font-bold tabular-nums mt-0.5', gate.color)}>{gate.step}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className={cn('text-sm font-semibold', gate.color)}>{gate.title}</div>
-                    <div className="text-xs text-zinc-500 mt-0.5">{gate.desc}</div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {gate.examples.map(ex => (
-                        <span key={ex} className="rounded border border-zinc-800 bg-zinc-950/60 px-2 py-0.5 text-[10px] text-zinc-500">{ex}</span>
-                      ))}
-                    </div>
-                  </div>
+          <div>
+            <div className="flex justify-between mb-1.5">
+              <label className="text-sm text-zinc-400">Min Margin of Safety</label>
+              <span className="text-sm font-mono font-bold text-emerald-400">{minMOS}%</span>
+            </div>
+            <input
+              type="range" min={15} max={50} value={minMOS}
+              onChange={e => setMinMOS(Number(e.target.value))}
+              className="w-full accent-emerald-600"
+            />
+            <div className="flex justify-between mt-1 text-[10px] text-zinc-700">
+              <span>Flexible (15%)</span><span>Conservative (50%)</span>
+            </div>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-2">
+            {[
+              { label: 'Max Position Size', value: '10%', note: 'Graham/Dodd hard limit' },
+              { label: 'Principles Active', value: '130+', note: 'Graham + Buffett + Fisher' },
+              { label: 'Hard Veto Count', value: '4', note: 'Any one blocks trade' },
+            ].map(({ label, value, note }) => (
+              <div key={label} className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-zinc-400">{label}</div>
+                  <div className="text-[10px] text-zinc-700">{note}</div>
                 </div>
+                <span className="font-mono text-sm font-bold text-zinc-300">{value}</span>
               </div>
             ))}
           </div>
+        </div>
+
+        {/* How it works — collapsible */}
+        <div className="mt-5 border-t border-zinc-800/60 pt-4">
+          <button
+            onClick={() => setShowGates(s => !s)}
+            className="text-xs text-zinc-600 hover:text-zinc-400 flex items-center gap-1"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={showGates ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+            </svg>
+            {showGates ? 'Hide' : 'How the autopilot works'}
+          </button>
+          {showGates && (
+            <div className="mt-3 p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 text-xs text-zinc-400 space-y-2">
+              <p><span className="text-red-400 font-medium">Step 1 — Veto check:</span> Any single hard veto (negative owner earnings, debt/equity {`>`} 2×, fraud flag) blocks the trade.</p>
+              <p><span className="text-violet-400 font-medium">Step 2 — Philosophy score:</span> 130+ principles across Graham, Buffett, Munger, Fisher. Must meet dynamic minimum (wide moat = lower bar).</p>
+              <p><span className="text-emerald-400 font-medium">Step 3 — Margin of safety:</span> Must trade at a discount to intrinsic value. Wide-moat companies need less discount.</p>
+              <p><span className="text-amber-400 font-medium">Step 4 — Position sizing:</span> Conviction tier drives size. Exceptional = up to 20% of capital.</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -823,8 +783,10 @@ export default function AutopilotPage() {
           )}
         </div>
       ) : !loading && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-6 py-10 text-center">
-          <p className="text-sm text-zinc-600">No decisions yet. Add tickers to your watchlist and click Run Now.</p>
+        <div className="text-center py-12 text-zinc-500">
+          <div className="text-4xl mb-3">🤖</div>
+          <p className="font-medium text-zinc-300 mb-1">No runs yet</p>
+          <p className="text-sm mb-4">Click &quot;Full Auto Run&quot; to start analyzing the market</p>
         </div>
       )}
 

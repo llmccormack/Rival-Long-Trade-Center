@@ -63,7 +63,7 @@ export default function WatchlistPage() {
   const [offset, setOffset] = useState(0)
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
-  const [activeTab, setActiveTab] = useState<FilterTab>('all')
+  const [activeTab, setActiveTab] = useState<FilterTab>('scored')
   const [ticker, setTicker] = useState('')
   const [adding, setAdding] = useState(false)
 
@@ -158,12 +158,18 @@ export default function WatchlistPage() {
   }
 
   // Client-side tab filtering
-  const filteredItems = items.filter(item => {
-    if (activeTab === 'scored') return item.lastScore != null
-    if (activeTab === 'buy') return item.isBuySignal
-    if (activeTab === 'yahoo') return item.notes?.toLowerCase().includes('yahoo') || item.notes?.toLowerCase().includes('auto-discovered')
-    return true
-  })
+  const filteredItems = (() => {
+    const filtered = items.filter(item => {
+      if (activeTab === 'scored') return item.lastScore != null
+      if (activeTab === 'buy') return item.isBuySignal
+      if (activeTab === 'yahoo') return item.notes?.toLowerCase().includes('yahoo') || item.notes?.toLowerCase().includes('auto-discovered')
+      return true
+    })
+    if (activeTab === 'scored') {
+      return [...filtered].sort((a, b) => (b.lastScore ?? 0) - (a.lastScore ?? 0))
+    }
+    return filtered
+  })()
 
   const scoredCount = items.filter(i => i.lastScore != null).length
   const buySignals = items.filter(i => i.isBuySignal)
@@ -293,12 +299,20 @@ export default function WatchlistPage() {
         <WatchlistSkeleton />
       ) : filteredItems.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1} className="h-10 w-10 text-zinc-700">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-          <p className="text-sm text-zinc-600">
-            {search ? `No stocks found matching "${search}"` : 'Add tickers of businesses you understand and want to own at the right price.'}
-          </p>
+          {activeTab === 'scored' && !search ? (
+            <p className="text-sm text-zinc-500">
+              No scored stocks yet — run the autopilot to start analyzing
+            </p>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1} className="h-10 w-10 text-zinc-700">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              <p className="text-sm text-zinc-600">
+                {search ? `No stocks found matching "${search}"` : 'Add tickers of businesses you understand and want to own at the right price.'}
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <>
