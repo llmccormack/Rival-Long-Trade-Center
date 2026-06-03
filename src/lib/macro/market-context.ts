@@ -91,29 +91,34 @@ function deriveScoreAdj(cape: number): number {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export async function getMarketContext(): Promise<MacroContext | null> {
+// Sensible fallback when FRED is unavailable — current market conditions (2025-2026)
+// CAPE ~34 (expensive), 10Y Treasury ~4.3%. Update periodically if market changes significantly.
+const FALLBACK_CAPE = 34
+const FALLBACK_TREASURY_PCT = 4.3
+
+export async function getMarketContext(): Promise<MacroContext> {
   if (_cached && Date.now() < _expiry) return _cached
 
   const [cape, treasury10yrPct] = await Promise.all([
-    fetchFredLatest('CAPE'),
+    // FRED CAPE series — try both known IDs
+    fetchFredLatest('CAPE').then(v => v ?? fetchFredLatest('SP500PE')),
     fetchFredLatest('DGS10'),
   ])
 
-  if (!cape || !treasury10yrPct) {
-    // FRED unavailable — return stale or null; autopilot runs with no adjustment
-    return _cached
-  }
+  // Use fetched values, fall back to known-good estimates if FRED is unavailable
+  const resolvedCape = cape ?? (_cached?.sp500Cape ?? FALLBACK_CAPE)
+  const resolvedTreasuryPct = treasury10yrPct ?? (_cached ? _cached.treasury10yr * 100 : FALLBACK_TREASURY_PCT)
 
-  const treasury10yr = treasury10yrPct / 100
-  const earningsYield = 1 / cape                              // Shiller earnings yield
-  const excessEarningsYield = earningsYield - treasury10yr   // vs risk-free
+  const treasury10yr = resolvedTreasuryPct / 100
+  const earningsYield = 1 / resolvedCape
+  const excessEarningsYield = earningsYield - treasury10yr
 
   _cached = {
-    sp500Cape: cape,
+    sp500Cape: resolvedCape,
     treasury10yr,
-    marketTemperature: deriveTemperature(cape),
-    cashReserveAdj: deriveCashAdj(cape),
-    minScoreAdj: deriveScoreAdj(cape),
+    marketTemperature: deriveTemperature(resolvedCape),
+    cashReserveAdj: deriveCashAdj(resolvedCape),
+    minScoreAdj: deriveScoreAdj(resolvedCape),
     excessEarningsYield,
     fetchedAt: new Date(),
   }

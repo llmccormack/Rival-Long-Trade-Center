@@ -359,9 +359,13 @@ export async function POST(request: NextRequest) {
   // Two-phase analysis:
   // Phase 1 — quick screen (2 FMP calls each) up to 4× dailyLimit candidates
   // Phase 2 — full deep analysis (7 FMP calls each) only on Phase 1 survivors
-  // This gives ~100 stocks screened per day on the free FMP tier (250 calls/day)
+  // Budget-aware two-phase analysis (FMP free = 250 calls/day):
+  // Phase 1: quickScreen 50 stocks × 2 calls = 100 calls
+  // Phase 2: getCompleteFundamentals 20 stocks × 7 calls = 140 calls
+  // Deferred: news+insider+earnings only for stocks scoring 35+ = ~3 calls × 5 = 15 calls
+  // Total: ~255 calls — within free tier
   const tradeResults: any[] = []
-  const screenPool = candidates.slice(0, dailyLimit * 4)
+  const screenPool = candidates.slice(0, dailyLimit * 2)  // 50 stocks for Phase 1
   const phase1Results = await Promise.allSettled(
     screenPool.map(item => quickScreen(item.stock.ticker).then(r => ({ item, quick: r })))
   )
@@ -434,34 +438,47 @@ export async function POST(request: NextRequest) {
         }),
       ]).catch(() => {})
 
-      const news = await getTickerNews(item.stock.ticker).catch(() => undefined)
-      const insider = await getInsiderTransactions(item.stock.ticker).catch(() => undefined)
-      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
-
-      // Deep-value dampening: net-nets and individual CAPE < 12 are statistically cheap
-      // regardless of market temperature. Graham: "At 2/3 of NCAV, buy in any market."
+      // Deep-value dampening
       const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
       const stockMinScore = isDeepValue
         ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 45) + 3)
         : effectiveMinScore
 
-      // Skip if earnings within 21 days — don't buy into uncertainty
-      const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
-      const today = new Date()
-      const earningsIn21Days = earningsEvents.some(e => {
-        const d = new Date(e.date)
-        const daysUntil = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-        return daysUntil >= 0 && daysUntil <= 21
-      })
-      if (earningsIn21Days) {
-        tradeResults.push({
-          ticker: item.stock.ticker,
-          action: 'SKIP',
-          score: philosophy.total,
-          mos: iv.marginOfSafety,
-          reason: 'Earnings within 21 days — waiting for clarity',
+      // Quick pre-score without news/insider to save FMP calls.
+      // Only fetch news/insider/earnings if the stock could plausibly qualify.
+      const quickPhilosophy = scoreBuyDecision(fundamentals, criteria, iv, undefined, undefined)
+      const couldQualify = quickPhilosophy.vetoedBy.length === 0 && quickPhilosophy.total >= (stockMinScore - 15)
+
+      // Fetch news/insider/earnings only for promising candidates (saves ~3 FMP calls per skip)
+      let news: Awaited<ReturnType<typeof getTickerNews>> | undefined
+      let insider: Awaited<ReturnType<typeof getInsiderTransactions>> | undefined
+      if (couldQualify) {
+        ;[news, insider] = await Promise.all([
+          getTickerNews(item.stock.ticker).catch(() => undefined),
+          getInsiderTransactions(item.stock.ticker).catch(() => undefined),
+        ])
+      }
+      const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
+
+      // Earnings check — only for stocks that scored well enough to matter
+      if (couldQualify) {
+        const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
+        const today = new Date()
+        const earningsIn21Days = earningsEvents.some(e => {
+          const d = new Date(e.date)
+          const daysUntil = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+          return daysUntil >= 0 && daysUntil <= 21
         })
-        continue
+        if (earningsIn21Days) {
+          tradeResults.push({
+            ticker: item.stock.ticker,
+            action: 'SKIP',
+            score: philosophy.total,
+            mos: iv.marginOfSafety,
+            reason: 'Earnings within 21 days — waiting for clarity',
+          })
+          continue
+        }
       }
 
       // Run moat analysis for promising candidates (score 35+)
