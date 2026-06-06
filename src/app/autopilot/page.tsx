@@ -127,7 +127,7 @@ function DecisionTable({
                 </td>
                 <td className="px-4 py-3 hidden sm:table-cell">
                   {d.mos != null ? (
-                    <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                    <span className={cn('font-mono text-sm tabular-nums', d.mos >= 15 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
                       {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
                     </span>
                   ) : <span className="text-zinc-700">—</span>}
@@ -150,7 +150,7 @@ function DecisionTable({
                       <span className="text-zinc-600">AUDIT TRAIL / {d.ticker}</span><br />
                       {'>'} Action: {d.action}<br />
                       {d.score != null && <>{`>`} Philosophy score: {d.score}/100{d.conviction ? ` (conviction: ${d.conviction.toUpperCase().replace('_', ' ')})` : ''}<br /></>}
-                      {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 30 ? '✓ PASS' : '✗ FAIL'}<br /></>}
+                      {d.mos != null && <>{`>`} Margin of safety: {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}% {d.mos >= 15 ? '✓ PASS' : '✗ FAIL'}<br /></>}
                       {(d.grahamNumber || d.dcfValue) && (
                         <>
                           {'>'} Intrinsic value breakdown:<br />
@@ -578,11 +578,11 @@ export default function AutopilotPage() {
                           {p.gainLoss >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
                         </td>
                         <td className="py-2.5 pr-4">
-                          <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 55 ? 'text-violet-400' : 'text-zinc-600')}>
+                          <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 45 ? 'text-violet-400' : 'text-zinc-600')}>
                             {p.philosophyScore ?? '—'}
                           </span>
                         </td>
-                        <td className={cn('py-2.5 pr-4 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 30 ? 'text-emerald-400' : 'text-amber-400')}>
+                        <td className={cn('py-2.5 pr-4 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 15 ? 'text-emerald-400' : 'text-amber-400')}>
                           {p.mosAtPurchase != null ? `${p.mosAtPurchase.toFixed(1)}%` : '—'}
                         </td>
                         <td className="py-2.5 font-mono text-xs text-zinc-600">
@@ -743,7 +743,7 @@ export default function AutopilotPage() {
                         </td>
                         <td className="px-4 py-3 hidden sm:table-cell">
                           {d.mos != null ? (
-                            <span className={cn('font-mono text-sm tabular-nums', d.mos >= 30 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                            <span className={cn('font-mono text-sm tabular-nums', d.mos >= 15 ? 'text-emerald-400' : d.mos >= 0 ? 'text-amber-400' : 'text-red-400')}>
                               {d.mos >= 0 ? '+' : ''}{d.mos.toFixed(1)}%
                             </span>
                           ) : '—'}

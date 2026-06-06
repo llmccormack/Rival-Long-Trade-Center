@@ -12,6 +12,7 @@ import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { prisma } from '@/lib/db/client'
+import { AddToWatchlistButton } from '@/components/ui/AddToWatchlistButton'
 
 export default async function AnalysisPage({
   params,
@@ -70,6 +71,35 @@ export default async function AnalysisPage({
     orderBy: { generatedAt: 'desc' },
   }).catch(() => null)
 
+  // Trigger moat analysis in background if not yet done
+  if (!moatAnalysis && fundamentals.price > 0 && process.env.ANTHROPIC_API_KEY) {
+    import('@/lib/ai/moat-analysis').then(({ analyzeMoat }) => {
+      analyzeMoat(ticker.toUpperCase(), fundamentals.name, philosophy.total, iv.marginOfSafety)
+        .then(async (analysis) => {
+          if (!analysis) return
+          await prisma.moatAnalysis.create({
+            data: {
+              ticker: ticker.toUpperCase(),
+              companyName: fundamentals.name,
+              moatScore: analysis.moatScore,
+              moatType: analysis.moatType,
+              moatSources: analysis.moatSources,
+              managementScore: analysis.managementScore,
+              businessQuality: analysis.businessQuality,
+              thesis: analysis.thesis,
+              keyRisks: analysis.keyRisks,
+              catalysts: analysis.catalysts,
+              verdict: analysis.verdict,
+              confidence: analysis.confidence,
+              quantScore: philosophy.total,
+              mosAtAnalysis: iv.marginOfSafety,
+            },
+          }).catch(() => {})
+        })
+        .catch(() => {})
+    }).catch(() => {})
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       {/* Header */}
@@ -77,6 +107,7 @@ export default async function AnalysisPage({
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-bold text-zinc-100 font-mono">{ticker.toUpperCase()}</h1>
+            <AddToWatchlistButton ticker={ticker.toUpperCase()} />
             <span className={`rounded-lg border px-2.5 py-0.5 text-xs font-semibold ${criteria.overallPass ? 'border-emerald-800/50 bg-emerald-900/20 text-emerald-400' : 'border-zinc-700 bg-zinc-900 text-zinc-500'}`}>
               {criteria.overallPass ? 'PASSES GRAHAM' : 'FAILS GRAHAM'}
             </span>
@@ -470,6 +501,17 @@ export default async function AnalysisPage({
           </section>
         )
       })()}
+
+      {/* Moat generating note */}
+      {!moatAnalysis && process.env.ANTHROPIC_API_KEY && (
+        <div className="rounded-xl border border-violet-800/30 bg-violet-900/10 px-4 py-3 flex items-center gap-3">
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+          </span>
+          <p className="text-xs text-violet-300">Moat analysis generating in background — refresh in ~30 seconds to see the AI qualitative layer.</p>
+        </div>
+      )}
 
       {/* News Panel */}
       {news && (

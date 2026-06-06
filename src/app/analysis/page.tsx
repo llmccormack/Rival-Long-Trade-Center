@@ -57,7 +57,7 @@ export default function AnalysisLandingPage() {
       </div>
 
       <p className="text-center text-xs text-zinc-700 max-w-sm">
-        Analysis runs Graham Chapter 14 criteria, calculates intrinsic value using owner earnings DCF + Graham Number, and scores against 137 philosophy principles.
+        Analysis runs Graham Chapter 14 criteria, calculates intrinsic value using owner earnings DCF + Graham Number, and scores against 130+ philosophy principles.
       </p>
     </div>
   )

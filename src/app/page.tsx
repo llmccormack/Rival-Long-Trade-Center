@@ -189,7 +189,7 @@ export default async function DashboardPage() {
         </div>
         <Link
           href="/autopilot"
-          className="flex items-center gap-2 rounded-lg border border-violet-600/60 bg-violet-600/10 px-5 py-2 text-sm font-semibold text-violet-300 hover:bg-violet-600/20 transition-all"
+          className="flex items-center gap-2 rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-semibold text-white transition-all shadow-lg shadow-violet-900/30"
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
             <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
@@ -199,14 +199,21 @@ export default async function DashboardPage() {
       </div>
 
       {/* Section 2: Top Opportunities */}
-      {opportunities.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Top Opportunities</h2>
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Top Opportunities</h2>
+          {opportunities.length > 0 && (
             <Link href="/watchlist" className="text-[11px] text-zinc-600 hover:text-violet-400 transition-colors">
               View all →
             </Link>
+          )}
+        </div>
+        {opportunities.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40">
+            <p className="text-sm text-zinc-600">Run the autopilot to discover top opportunities</p>
+            <Link href="/autopilot" className="text-xs text-violet-500 hover:text-violet-400 transition-colors">Go to Autopilot →</Link>
           </div>
+        ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
             {opportunities.map((opp: any) => {
               const scoreColor = opp.lastScore >= 60 ? 'text-emerald-400' : opp.lastScore >= 45 ? 'text-amber-400' : 'text-zinc-500'
@@ -235,7 +242,7 @@ export default async function DashboardPage() {
                   </div>
                   {opp.lastMos != null && (
                     <div className="text-xs text-zinc-500 mb-2">
-                      MOS: <span className={cn('font-mono font-semibold', opp.lastMos >= 30 ? 'text-emerald-400' : opp.lastMos >= 0 ? 'text-amber-400' : 'text-red-400')}>
+                      MOS: <span className={cn('font-mono font-semibold', opp.lastMos >= 15 ? 'text-emerald-400' : opp.lastMos >= 0 ? 'text-amber-400' : 'text-red-400')}>
                         {opp.lastMos >= 0 ? '+' : ''}{opp.lastMos.toFixed(1)}%
                       </span>
                     </div>
@@ -252,8 +259,8 @@ export default async function DashboardPage() {
               )
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Section 3: Daily Rundown */}
       {dailyRundown && (

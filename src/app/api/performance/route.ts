@@ -9,8 +9,38 @@ export async function GET() {
       orderBy: { firstPurchased: 'asc' },
     })
 
+    // Always include macro/watchlist context regardless of whether there are positions
+    const [topWatchlist, config] = await Promise.all([
+      prisma.watchlistItem.findMany({
+        where: { isActive: true, lastScore: { not: null } },
+        orderBy: { lastScore: 'desc' },
+        take: 5,
+        include: { stock: { include: { intrinsicValues: { take: 1, orderBy: { calculatedAt: 'desc' } } } } },
+      }).catch(() => []),
+      prisma.autopilotConfig.findUnique({ where: { id: 'singleton' } }).catch(() => null),
+    ])
+
+    const topWatchlistSummary = topWatchlist.map((item: any) => {
+      const iv = item.stock.intrinsicValues?.[0]
+      return {
+        ticker: item.stock.ticker,
+        name: item.stock.name,
+        lastScore: item.lastScore,
+        lastMos: item.lastMos ?? iv?.marginOfSafety ?? null,
+        lastAction: item.lastAction,
+      }
+    })
+
+    const lastRunResult = config?.lastRunResult as any ?? null
+
     if (positions.length === 0) {
-      return Response.json({ hasData: false, message: 'No positions yet' })
+      return Response.json({
+        hasData: false,
+        message: 'No positions yet',
+        topWatchlist: topWatchlistSummary,
+        lastRunResult,
+        lastRunAt: config?.lastRunAt ?? null,
+      })
     }
 
     // Snapshots for chart data (most recent 90 days of snapshots if they exist)
@@ -89,6 +119,9 @@ export async function GET() {
 
     return Response.json({
       hasData: true,
+      topWatchlist: topWatchlistSummary,
+      lastRunResult,
+      lastRunAt: config?.lastRunAt ?? null,
       summary: {
         totalCost: Math.round(totalCost * 100) / 100,
         totalValue: Math.round(totalValue * 100) / 100,

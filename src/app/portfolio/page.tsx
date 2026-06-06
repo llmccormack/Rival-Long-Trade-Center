@@ -57,6 +57,15 @@ export default async function PortfolioPage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
+      {/* Paper Trading Mode Banner */}
+      <div className="rounded-xl border border-violet-800/30 bg-violet-900/10 px-4 py-3 flex items-center justify-between">
+        <div>
+          <span className="text-xs font-semibold text-violet-400 uppercase tracking-widest">Paper Trading Mode</span>
+          <p className="text-xs text-zinc-500 mt-0.5">Simulated trades only — no real money. Connect Schwab in Settings to go live.</p>
+        </div>
+        <a href="/settings" className="text-xs text-zinc-600 hover:text-zinc-400">Settings →</a>
+      </div>
+
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold text-zinc-100">Portfolio</h1>

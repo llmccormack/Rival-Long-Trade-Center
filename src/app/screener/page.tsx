@@ -214,6 +214,7 @@ export default function ScreenerPage() {
                     <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">MOS</th>
                     <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Score</th>
                     <th className="px-4 py-3 text-center text-[10px] font-medium uppercase tracking-widest text-zinc-600">Signal</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
@@ -253,6 +254,11 @@ export default function ScreenerPage() {
                         )}>
                           {r.vetoCount > 0 && r.signal !== 'BUY' ? 'VETO' : r.signal}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <a href={`/analysis/${r.ticker}`} className="text-[11px] text-zinc-600 hover:text-violet-400 transition-colors whitespace-nowrap">
+                          Analyse →
+                        </a>
                       </td>
                     </tr>
                   ))}

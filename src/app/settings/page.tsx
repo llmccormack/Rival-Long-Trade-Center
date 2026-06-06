@@ -228,7 +228,10 @@ export default function SettingsPage() {
 
       {/* Autopilot config */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h2 className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">Autopilot Configuration</h2>
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-widest text-zinc-500">Autopilot Configuration</h2>
+        <p className="text-xs text-zinc-600 mb-4">
+          Wide-moat businesses automatically get lower thresholds. These are the floor values — the moat analysis layer adjusts them per stock.
+        </p>
 
         {!config ? (
           <div className="h-40 animate-pulse rounded-lg bg-zinc-800" />
@@ -416,8 +419,8 @@ export default function SettingsPage() {
 
             {/* Sliders */}
             {[
-              { key: 'minPhilosophyScore' as const, label: 'Min Philosophy Score', min: 40, max: 80, step: 1, unit: '/ 100', color: 'violet' },
-              { key: 'minMarginOfSafety' as const, label: 'Min Margin of Safety', min: 15, max: 50, step: 1, unit: '%', color: 'emerald' },
+              { key: 'minPhilosophyScore' as const, label: 'Min Philosophy Score', min: 30, max: 80, step: 1, unit: '/ 100', color: 'violet' },
+              { key: 'minMarginOfSafety' as const, label: 'Min Margin of Safety (%)', min: 15, max: 50, step: 1, unit: '%', color: 'emerald' },
               { key: 'maxPositionPct' as const, label: 'Max Position Size', min: 5, max: 15, step: 1, unit: '% of portfolio', color: 'blue' },
             ].map(({ key, label, min, max, step, unit, color }) => (
               <div key={key}>
