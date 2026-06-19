@@ -204,6 +204,21 @@ export default function AutopilotPage() {
   const [fullRunResult, setFullRunResult] = useState<any>(null)
   const [skippedExpanded, setSkippedExpanded] = useState(false)
   const [showGates, setShowGates] = useState(false)
+  const [cleanupState, setCleanupState] = useState<'idle' | 'running' | 'done'>('idle')
+  const [cleanupResult, setCleanupResult] = useState<{ deleted: number; remaining: number } | null>(null)
+
+  const runCleanup = async () => {
+    if (!confirm('This will permanently delete all auto-discovered stocks from the watchlist (~6000 rows). Manual picks are kept. Continue?')) return
+    setCleanupState('running')
+    try {
+      const res = await fetch('/api/admin/cleanup-watchlist', { method: 'POST' })
+      const data = await res.json()
+      setCleanupResult({ deleted: data.deleted, remaining: data.remaining })
+      setCleanupState('done')
+    } catch {
+      setCleanupState('idle')
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -791,6 +806,30 @@ export default function AutopilotPage() {
       )}
 
       <PortfolioReviewPanel />
+
+      {/* Watchlist cleanup — one-time migration */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 mt-2">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-1">Watchlist Cleanup</div>
+            <p className="text-xs text-zinc-600 max-w-md">
+              Removes all auto-discovered / SEC EDGAR stocks from the watchlist. The autopilot now uses the FMP screener as its universe — those 6000 rows are obsolete. Manual picks are kept.
+            </p>
+            {cleanupResult && (
+              <p className="text-xs text-emerald-400 mt-2">
+                ✓ Deleted {cleanupResult.deleted.toLocaleString()} rows · {cleanupResult.remaining} manual items kept
+              </p>
+            )}
+          </div>
+          <button
+            onClick={runCleanup}
+            disabled={cleanupState !== 'idle'}
+            className="shrink-0 rounded-lg border border-red-900/50 bg-red-950/30 px-4 py-2 text-xs font-medium text-red-400 hover:border-red-700 hover:bg-red-900/30 disabled:opacity-40 transition-colors whitespace-nowrap"
+          >
+            {cleanupState === 'running' ? 'Cleaning…' : cleanupState === 'done' ? '✓ Done' : 'Clean up watchlist'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

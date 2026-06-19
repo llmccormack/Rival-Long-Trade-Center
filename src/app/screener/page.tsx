@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ScreenerTable } from '@/components/screener/ScreenerTable'
 import { cn } from '@/lib/utils'
 import type { ScreenedStock } from '@/types'
@@ -15,10 +15,36 @@ const CRITERIA = [
   { label: 'No Earnings Deficit', desc: 'No loss years in the past decade' },
 ]
 
-type Tab = 'graham' | 'market'
+type Tab = 'scores' | 'market' | 'graham'
 
 export default function ScreenerPage() {
-  const [tab, setTab] = useState<Tab>('market')
+  const [tab, setTab] = useState<Tab>('scores')
+
+  // Score board state
+  const [scoreData, setScoreData] = useState<any>(null)
+  const [scoresLoading, setScoresLoading] = useState(false)
+  const [scoresError, setScoresError] = useState<string | null>(null)
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'BUY' | 'above'>('all')
+
+  const loadScores = async () => {
+    setScoresLoading(true)
+    setScoresError(null)
+    try {
+      const res = await fetch('/api/screener/scores?limit=200')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to load scores')
+      setScoreData(data)
+    } catch (e: any) {
+      setScoresError(e.message)
+    } finally {
+      setScoresLoading(false)
+    }
+  }
+
+  // Auto-load scores when tab opens
+  useEffect(() => {
+    if (tab === 'scores' && !scoreData && !scoresLoading) loadScores()
+  }, [tab])
 
   // Graham screener state
   const [grahamResults, setGrahamResults] = useState<ScreenedStock[]>([])
@@ -89,6 +115,17 @@ export default function ScreenerPage() {
       {/* Tabs */}
       <div className="flex rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 gap-1 w-fit">
         <button
+          onClick={() => setTab('scores')}
+          className={cn(
+            'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+            tab === 'scores'
+              ? 'bg-violet-600/20 text-violet-300 border border-violet-700/40'
+              : 'text-zinc-500 hover:text-zinc-300'
+          )}
+        >
+          Score Board
+        </button>
+        <button
           onClick={() => setTab('market')}
           className={cn(
             'rounded-lg px-4 py-2 text-sm font-medium transition-all',
@@ -118,13 +155,167 @@ export default function ScreenerPage() {
         </button>
       </div>
 
+      {/* ── SCORE BOARD TAB ───────────────────────────────────────────── */}
+      {tab === 'scores' && (
+        <>
+          {/* Summary stats */}
+          {scoreData && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Stocks scored', value: scoreData.total, color: 'text-zinc-200' },
+                { label: 'Above buy threshold', value: scoreData.aboveThreshold, color: 'text-violet-400' },
+                { label: 'Buy signals', value: scoreData.buySignals, color: 'text-emerald-400' },
+                { label: 'Buy threshold', value: `${scoreData.buyThreshold}/100`, color: 'text-amber-400' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                  <div className={cn('text-xl font-bold font-mono', color)}>{value}</div>
+                  <div className="text-[11px] text-zinc-600 mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Controls */}
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+              {(['all', 'above', 'BUY'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setScoreFilter(f)}
+                  className={cn(
+                    'rounded px-3 py-1 text-xs font-medium transition-all',
+                    scoreFilter === f
+                      ? 'bg-violet-600/20 text-violet-300 border border-violet-700/40'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  )}
+                >
+                  {f === 'all' ? 'All stocks' : f === 'above' ? `≥ ${scoreData?.buyThreshold ?? 45}/100` : 'Buy signals only'}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={loadScores}
+              disabled={scoresLoading}
+              className="ml-auto flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-1.5 text-xs font-medium text-zinc-300 hover:border-violet-700 hover:text-violet-300 disabled:opacity-40 transition-colors"
+            >
+              {scoresLoading ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {scoresError && (
+            <div className="rounded-xl border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+              {scoresError}
+            </div>
+          )}
+
+          {/* Score table */}
+          {scoreData && (() => {
+            const threshold = scoreData.buyThreshold ?? 45
+            const rows = (scoreData.scores ?? []).filter((s: any) => {
+              if (scoreFilter === 'BUY') return s.signal === 'BUY'
+              if (scoreFilter === 'above') return s.score >= threshold
+              return true
+            })
+            return rows.length > 0 ? (
+              <div className="rounded-xl border border-zinc-800 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-zinc-900">
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Name</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Sector</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Price</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">P/E</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">MOS</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Score</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 min-w-[120px]">Progress to buy</th>
+                      <th className="px-4 py-3 text-center text-[10px] font-medium uppercase tracking-widest text-zinc-600">Signal</th>
+                      <th className="px-4 py-3 text-[10px] font-medium uppercase tracking-widest text-zinc-600">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {rows.map((s: any) => {
+                      const pct = Math.min(100, (s.score / threshold) * 100)
+                      const overThreshold = s.score >= threshold
+                      return (
+                        <tr key={s.ticker} className="bg-zinc-900 hover:bg-zinc-800/60 transition-colors">
+                          <td className="px-4 py-3">
+                            <a href={`/analysis/${s.ticker}`} className="font-mono text-sm font-semibold text-violet-400 hover:text-violet-300">
+                              {s.ticker}
+                            </a>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-zinc-400 max-w-[160px] truncate">{s.name ?? '—'}</td>
+                          <td className="px-4 py-3 text-[11px] text-zinc-600">{s.sector ?? '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300">${s.price?.toFixed(2) ?? '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-400">{s.pe?.toFixed(1) ?? '—'}</td>
+                          <td className={cn('px-4 py-3 text-right font-mono text-xs', s.mos >= 30 ? 'text-emerald-400' : s.mos > 0 ? 'text-amber-400' : 'text-red-400')}>
+                            {s.mos?.toFixed(1) ?? '—'}%
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={cn(
+                              'font-mono text-sm font-bold',
+                              s.score >= 70 ? 'text-emerald-400'
+                                : s.score >= threshold ? 'text-violet-400'
+                                : s.score >= 35 ? 'text-amber-400'
+                                : 'text-zinc-500'
+                            )}>
+                              {s.score}
+                            </span>
+                            <span className="text-[10px] text-zinc-700">/100</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="relative h-1.5 flex-1 rounded-full bg-zinc-800">
+                                <div
+                                  className={cn('h-full rounded-full transition-all', overThreshold ? 'bg-emerald-500' : 'bg-violet-600/60')}
+                                  style={{ width: `${pct}%` }}
+                                />
+                                {/* Buy threshold marker */}
+                                <div className="absolute top-1/2 -translate-y-1/2 w-px h-3 bg-zinc-500" style={{ left: '100%' }} />
+                              </div>
+                              {overThreshold && <span className="text-[10px] text-emerald-500 whitespace-nowrap">✓ buy</span>}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={cn(
+                              'rounded border px-2 py-0.5 text-[10px] font-semibold',
+                              s.signal === 'BUY' ? 'border-emerald-700 bg-emerald-900/30 text-emerald-400'
+                                : s.vetoCount > 0 ? 'border-red-800 bg-red-900/20 text-red-500'
+                                : 'border-zinc-700 bg-zinc-800 text-zinc-500'
+                            )}>
+                              {s.vetoCount > 0 && s.signal !== 'BUY' ? 'VETO' : s.signal}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-[10px] text-zinc-700 uppercase">{s.source}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40">
+                <p className="text-sm text-zinc-600">No stocks scored yet.</p>
+                <p className="text-xs text-zinc-700">Run a Market Scan or the Autopilot to start building the score board.</p>
+              </div>
+            )
+          })()}
+
+          {!scoreData && !scoresLoading && !scoresError && (
+            <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40">
+              <p className="text-sm text-zinc-600">No scores loaded.</p>
+            </div>
+          )}
+        </>
+      )}
+
       {/* ── MARKET SCAN TAB ────────────────────────────────────────────── */}
       {tab === 'market' && (
         <>
           {/* How it works */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
-              { step: '1', label: 'Yahoo Finance pre-screen', desc: 'Pulls 200+ candidates from value screens across the whole US market — free, no API key', color: 'text-sky-400 border-sky-900/40 bg-sky-950/20' },
+              { step: '1', label: 'FMP stock screener', desc: 'Pulls 250+ candidates using direct value criteria (PE ≤ 20, PB ≤ 2.5, market cap ≥ $300M) — two passes: deep value and wider Buffett zone', color: 'text-sky-400 border-sky-900/40 bg-sky-950/20' },
               { step: '2', label: 'FMP deep analysis', desc: 'Runs full fundamentals on each candidate — income, balance sheet, key metrics, operating margin trend', color: 'text-violet-400 border-violet-900/40 bg-violet-950/20' },
               { step: '3', label: 'Philosophy scoring', desc: 'All 241 principles applied — Graham, Greenblatt, Lynch, Klarman, Munger and more. Vetoes block bad buys', color: 'text-emerald-400 border-emerald-900/40 bg-emerald-950/20' },
             ].map(({ step, label, desc, color }) => (

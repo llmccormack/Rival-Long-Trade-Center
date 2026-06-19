@@ -261,6 +261,33 @@ model QuarterlyRebalance {
   actions    Json
 }
 
+// Persistent score leaderboard — every stock scored by scanner or autopilot lands here.
+// One row per ticker (upserted), always reflects the latest run.
+// The screener Score Board and autopilot buy logic both read from this table.
+model StockScore {
+  id             String   @id @default(cuid())
+  ticker         String   @unique
+  name           String?
+  sector         String?
+  price          Float
+  score          Int      // 0–100 philosophy score
+  mos            Float    // margin of safety %
+  intrinsicValue Float?
+  grahamNumber   Float?
+  pe             Float?
+  pb             Float?
+  signal         String   // BUY | PASS | HOLD
+  conviction     String?  // exceptional | strong_buy | buy | watchlist | avoid
+  vetoCount      Int      @default(0)
+  vetoReasons    String[] @default([])
+  source         String   @default("scan") // "scan" | "autopilot"
+  scoredAt       DateTime @default(now())
+
+  @@index([score])
+  @@index([signal])
+  @@index([scoredAt])
+}
+
 model PortfolioSnapshot {
   id         String   @id @default(cuid())
   date       DateTime @default(now())

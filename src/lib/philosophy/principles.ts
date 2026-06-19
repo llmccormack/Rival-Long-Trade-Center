@@ -202,6 +202,16 @@ export const INTELLIGENT_INVESTOR: Principle[] = [
     appliesTo: ['screen', 'buy'],
   },
   {
+    id: 'ii_accruals_sloan',
+    source: 'intelligent_investor',
+    chapter: 'Chapter 12',
+    category: 'earnings_power',
+    title: 'Accruals Ratio (Sloan 1996)',
+    rule: 'High accruals — earnings that exceed operating cash flow — consistently predict future earnings disappointments and underperformance. Formula: (Net Income - Operating Cash Flow) / Total Assets. Below 2%: highest quality earnings. Above 8%: red flag.',
+    weight: 7,
+    appliesTo: ['screen', 'buy'],
+  },
+  {
     id: 'ii_c12_goodwill_amortisation',
     source: 'intelligent_investor',
     chapter: 'Chapter 12',

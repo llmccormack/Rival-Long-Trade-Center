@@ -69,8 +69,10 @@ export function scoreBuyDecision(
     audit.push(`VETO: Current ratio ${fundamentals.currentRatio.toFixed(2)} is below 1.0. Business cannot meet short-term obligations. (Intelligent Investor Ch.14)`)
   }
 
-  // Investment-not-speculation veto: must have 10yr earnings history
-  if (!fundamentals.epsHistory || fundamentals.epsHistory.length < 5) {
+  // Investment-not-speculation veto: need at least 3 years of earnings history.
+  // FMP free tier often returns only 3-4 years even for well-established companies,
+  // so a higher threshold would veto legitimate stocks due to data gaps, not thin history.
+  if (!fundamentals.epsHistory || fundamentals.epsHistory.length < 3) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c1_investment_definition')!
     vetoed.push(p)
     audit.push(`VETO: Insufficient earnings history for thorough analysis. Speculation, not investment. (Intelligent Investor Ch.1)`)
@@ -178,7 +180,7 @@ export function scoreBuyDecision(
     fundamentals.operatingCashFlow !== undefined &&
     fundamentals.totalAssets && fundamentals.totalAssets > 0
   ) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c12_eps_skepticism')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_accruals_sloan')!
     if (p) {
       const accruals = fundamentals.netIncome - fundamentals.operatingCashFlow
       const accrualsRatio = accruals / fundamentals.totalAssets
@@ -281,7 +283,9 @@ export function scoreBuyDecision(
 
   // ── Lynch: PEG Ratio ──────────────────────────────────────────────────────
 
-  if (fundamentals.peg !== undefined && fundamentals.peg > 0) {
+  // PEG requires a reliable growth estimate — with <6 years of history the regression
+  // is too noisy to trust, and a garbage growth rate produces a misleading PEG score.
+  if (fundamentals.peg !== undefined && fundamentals.peg > 0 && (fundamentals.epsHistory?.length ?? 0) >= 6) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'pl_peg_ratio')!
     if (p) {
       const pegScore = fundamentals.peg <= 0.5 ? 1 : fundamentals.peg <= 1.0 ? 0.75 : fundamentals.peg <= 1.5 ? 0.4 : 0.1
@@ -307,15 +311,6 @@ export function scoreBuyDecision(
   }
 
   // ── Dreman Contrarian Metrics ─────────────────────────────────────────────
-
-  if (fundamentals.pe !== undefined && fundamentals.pe > 0) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'dd_low_pe_outperforms')!
-    if (p) {
-      const drePeScore = fundamentals.pe <= 8 ? 1 : fundamentals.pe <= 12 ? 0.8 : fundamentals.pe <= 16 ? 0.5 : 0.1
-      triggered.push({ principle: p, score: drePeScore, note: `Dreman low-P/E check: ${fundamentals.pe.toFixed(1)}× (bottom quintile historically outperforms)` })
-      if (fundamentals.pe <= 10) audit.push(`PASS: P/E ${fundamentals.pe.toFixed(1)} in deep-value territory — Dreman's 40yr research shows bottom-quintile P/E consistently outperforms the market. (Contrarian Investment Strategies)`)
-    }
-  }
 
   if (fundamentals.priceToFreeCashFlow !== undefined && fundamentals.priceToFreeCashFlow > 0) {
     const p = ALL_PRINCIPLES.find(p => p.id === 'dd_price_to_cash_flow_superior')!

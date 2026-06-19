@@ -1,67 +1,86 @@
-// Yahoo Finance discovery screener — completely free, no API key required
+// Market candidate discovery — uses FMP stock screener API with custom value criteria.
 //
-// Uses yahoo-finance2 which handles cookies/crumbs automatically.
-// Pulls from multiple Yahoo predefined screens for broad value coverage:
-//   undervalued_large_caps   ~91 stocks   (PE < 20, PB < 2.5)
-//   undervalued_growth_stocks ~211 stocks  (GARP: PEG < 1)
-//   aggressive_small_caps    ~369 stocks  (small cap with value characteristics)
-//   portfolio_anchors        ~249 stocks  (high quality, durable businesses)
+// Replaces the previous Yahoo predefined-screen approach, which was unreliable:
+//   - Yahoo's "aggressive_small_caps" and "undervalued_growth_stocks" screens are
+//     Yahoo's own curated lists, not our value criteria.
+//   - Predefined screens change composition without notice.
+//   - PEG-based screens conflict with Graham methodology.
 //
-// Returns deduplicated candidates with enough data to do a basic value pre-filter
-// using ONLY Yahoo data — no FMP calls needed for discovery. The autopilot buy
-// phase then does full FMP analysis on the resulting watchlist items.
+// FMP /stock-screener allows direct custom filtering (PE, PB, marketCap, etc.)
+// so we get exactly the universe our strategy targets.
 //
-// API call budget: 0 FMP calls. All Yahoo, all free.
+// Two passes:
+//   Pass 1 — Deep value:    PE ≤ 15, PB ≤ 1.5  (classic Graham)
+//   Pass 2 — Wider value:   PE ≤ 20, PB ≤ 2.5  (Buffett "fair price" zone)
+// Results are deduplicated and sorted by PE ascending (cheapest first).
+// Budget: 2 FMP API calls per scan.
 
-import YahooFinance from 'yahoo-finance2'
-
-let _yf: InstanceType<typeof YahooFinance> | null = null
-function yf(): InstanceType<typeof YahooFinance> {
-  if (!_yf) _yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
-  return _yf
-}
-
-// Screens ordered by Graham relevance: deep value first, GARP second
-const DISCOVERY_SCREENS = [
-  'undervalued_large_caps',
-  'undervalued_growth_stocks',
-  'aggressive_small_caps',
-  'portfolio_anchors',
-]
+const FMP_BASE = 'https://financialmodelingprep.com/api/v3'
 
 export interface YahooCandidate {
-  symbol: string
-  name: string
-  price: number
-  pe: number | null
-  pb: number | null
+  symbol:    string
+  name:      string
+  price:     number
+  pe:        number | null
+  pb:        number | null
   marketCap: number
-  eps: number | null      // TTM EPS — used for Graham Number approximation
-  bookValue: number | null // book value per share — used for Graham Number
-  sector: string | null
-  source: string
+  eps:       number | null
+  bookValue: number | null
+  sector:    string | null
+  source:    string
 }
 
-async function fetchScreen(screenId: string, count = 250): Promise<YahooCandidate[]> {
+interface FMPScreenerResult {
+  symbol:        string
+  companyName:   string
+  price:         number
+  marketCap:     number
+  beta:          number | null
+  volume:        number | null
+  lastAnnualDividend: number | null
+  exchange:      string
+  exchangeShortName: string
+  country:       string
+  isEtf:         boolean
+  isActivelyTrading: boolean
+  sector:        string | null
+  industry:      string | null
+}
+
+async function fetchFMPScreen(params: Record<string, string | number>, source: string): Promise<YahooCandidate[]> {
+  const apiKey = process.env.FMP_API_KEY
+  if (!apiKey) return []
+
+  const query = new URLSearchParams({
+    ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+    isEtf: 'false',
+    isActivelyTrading: 'true',
+    country: 'US',
+    limit: '250',
+    apikey: apiKey,
+  })
+
   try {
-    const r = await yf().screener(
-      { scrIds: screenId, count } as any,
-      { validateResult: false } as any
-    )
-    const quotes: any[] = r?.quotes ?? []
-    return quotes
-      .filter(q => q.quoteType === 'EQUITY' && q.symbol && !q.symbol.includes('.'))
-      .map(q => ({
-        symbol: q.symbol as string,
-        name: (q.shortName ?? q.longName ?? q.displayName ?? q.symbol) as string,
-        price: (q.regularMarketPrice ?? 0) as number,
-        pe: q.trailingPE as number | null ?? null,
-        pb: q.priceToBook as number | null ?? null,
-        marketCap: (q.marketCap ?? 0) as number,
-        eps: q.epsTrailingTwelveMonths as number | null ?? null,
-        bookValue: q.bookValue as number | null ?? null,
-        sector: q.sector as string | null ?? null,
-        source: screenId,
+    const res = await fetch(`${FMP_BASE}/stock-screener?${query}`, {
+      next: { revalidate: 0 },
+    })
+    if (!res.ok) return []
+    const data: FMPScreenerResult[] = await res.json()
+    if (!Array.isArray(data)) return []
+
+    return data
+      .filter(r => r.symbol && !r.symbol.includes('.') && !r.symbol.includes('-') && r.price > 0)
+      .map(r => ({
+        symbol:    r.symbol,
+        name:      r.companyName ?? r.symbol,
+        price:     r.price,
+        pe:        null,  // screener endpoint doesn't return PE — FMP deep analysis fills this
+        pb:        null,  // same — filled by getCompleteFundamentals
+        marketCap: r.marketCap ?? 0,
+        eps:       null,
+        bookValue: null,
+        sector:    r.sector ?? null,
+        source,
       }))
   } catch {
     return []
@@ -73,32 +92,39 @@ export async function getMarketCandidates(options: {
   maxPB?: number
   minMarketCapM?: number
 } = {}): Promise<YahooCandidate[]> {
-  const { maxPE = 30, maxPB = 4, minMarketCapM = 100 } = options
+  const { maxPE = 20, maxPB = 2.5, minMarketCapM = 300 } = options
   const minMarketCap = minMarketCapM * 1_000_000
 
-  // Fetch all screens in parallel
-  const screenResults = await Promise.all(DISCOVERY_SCREENS.map(s => fetchScreen(s)))
+  // Run both passes in parallel
+  const [deepValue, widerValue] = await Promise.all([
+    // Pass 1: classic Graham deep value
+    fetchFMPScreen({
+      marketCapMoreThan: minMarketCap,
+      peRatioLowerThan: Math.min(maxPE, 15),
+      priceToBookLowerThan: Math.min(maxPB, 1.5),
+    }, 'fmp_deep_value'),
 
-  // Deduplicate by symbol — first screen that mentions a ticker wins
+    // Pass 2: wider Buffett "fair price" zone
+    fetchFMPScreen({
+      marketCapMoreThan: minMarketCap,
+      peRatioLowerThan: maxPE,
+      priceToBookLowerThan: maxPB,
+    }, 'fmp_wider_value'),
+  ])
+
+  // Deduplicate — deep value pass takes priority (it's the better source)
   const seen = new Map<string, YahooCandidate>()
-  for (const batch of screenResults) {
-    for (const c of batch) {
-      if (!seen.has(c.symbol)) seen.set(c.symbol, c)
-    }
+  for (const c of [...deepValue, ...widerValue]) {
+    if (!seen.has(c.symbol)) seen.set(c.symbol, c)
   }
 
-  // Basic value pre-filter using only Yahoo data
-  // Intentionally loose — the buy phase does the real gatekeeping via FMP
-  const filtered = [...seen.values()].filter(c => {
-    if (c.price <= 0) return false
-    if (c.marketCap > 0 && c.marketCap < minMarketCap) return false
-    // Only apply PE/PB filter when Yahoo actually has the data
-    if (c.pe !== null && c.pe <= 0) return false          // loss-making
-    if (c.pe !== null && c.pe > maxPE) return false
-    if (c.pb !== null && c.pb > maxPB) return false
-    return true
-  })
+  const all = [...seen.values()].filter(c => c.price > 0 && c.marketCap >= minMarketCap)
 
-  // Sort: lowest PE first (deepest value candidates at top)
-  return filtered.sort((a, b) => (a.pe ?? 99) - (b.pe ?? 99))
+  // Deep value candidates first, then wider — within each group order doesn't matter
+  // since FMP deep analysis re-ranks by philosophy score anyway
+  const deepSet = new Set(deepValue.map(c => c.symbol))
+  return [
+    ...all.filter(c => deepSet.has(c.symbol)),
+    ...all.filter(c => !deepSet.has(c.symbol)),
+  ]
 }

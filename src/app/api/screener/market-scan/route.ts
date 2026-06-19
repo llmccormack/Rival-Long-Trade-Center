@@ -3,6 +3,7 @@ import { getCompleteFundamentals } from '@/lib/fmp/client'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
+import { upsertStockScore } from '@/lib/philosophy/persist-score'
 import { prisma } from '@/lib/db/client'
 
 // GET /api/screener/market-scan
@@ -56,6 +57,25 @@ export async function GET(req: Request) {
       }
 
       results.push(result)
+
+      // Persist to score leaderboard (fire-and-forget)
+      upsertStockScore({
+        ticker:        candidate.symbol,
+        name:          fundamentals.name,
+        sector:        fundamentals.sector,
+        price:         fundamentals.price,
+        score:         philosophy.total,
+        mos:           iv.marginOfSafety,
+        intrinsicValue: iv.intrinsicValue,
+        grahamNumber:  iv.grahamNumber,
+        pe:            fundamentals.pe,
+        pb:            fundamentals.pb,
+        signal:        philosophy.signal,
+        conviction:    philosophy.conviction,
+        vetoCount:     philosophy.vetoedBy.length,
+        vetoReasons:   philosophy.vetoedBy.map((p: any) => p.title),
+        source:        'scan',
+      }).catch(() => {})
 
       // Step 3: Auto-promote to watchlist if it qualifies
       if (

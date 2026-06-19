@@ -41,6 +41,10 @@ function regressionGrowthRate(epsHistory: { year: number; value: number }[]): nu
 
 function hasNoEarningsDeficit(epsHistory: { year: number; value: number }[]): boolean {
   const recent = [...epsHistory].sort((a, b) => b.year - a.year).slice(0, 10)
+  // If 2020 is the only negative year, don't penalise — it was an anomalous shutdown year
+  // that hit entire industries (airlines, hotels, restaurants) regardless of business quality.
+  const negativeYears = recent.filter(v => v.value <= 0)
+  if (negativeYears.length === 1 && negativeYears[0].year === 2020) return true
   return recent.every((v) => v.value > 0)
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { generateRundown } from '@/lib/ai/rundown'
-import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks } from '@/lib/fmp/client'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
@@ -16,6 +16,7 @@ import { isMarketDay } from '@/lib/utils/market-hours'
 import { getSecTickers, getDailyBatch } from '@/lib/sec/tickers'
 import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
 import { analyzeMoat, moatScoreAdjustment } from '@/lib/ai/moat-analysis'
+import { upsertStockScore } from '@/lib/philosophy/persist-score'
 
 // POST /api/autopilot/full-run
 // Investor-style autopilot: sell then buy, watchlist only.
@@ -299,109 +300,90 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // ── Step 2: Buy evaluation — priority-based watchlist selection ──────────
-  // Picks the best candidates each day rather than cycling blindly.
-  // Priority order:
-  //   1. Manual items (user-curated) — always included
-  //   2. Yahoo-highlighted (appearing in active value screens) — high signal
-  //   3. Previously scored with high score but failing MOS — close to qualifying
-  //   4. Never analyzed — rotate through these to build coverage
+  // ── Step 2: Build the buy candidate list ────────────────────────────────
+  //
+  // SCREENER-FIRST ARCHITECTURE
+  // ─────────────────────────────
+  // Old approach: pull from the watchlist (5000+ EDGAR stocks rotated 25/day).
+  //   Problem: ~200 days to score everything once. Slow, blind, no prioritisation.
+  //
+  // New approach: FMP screener as the universe source.
+  //   1. Manual watchlist items (user-curated) — always go first, always scored.
+  //   2. FMP screener (1 call) returns 250–500 pre-filtered value candidates
+  //      (PE ≤ 20, PB ≤ 2.5, marketCap ≥ $300M). These already pass basic gates.
+  //   3. Skip Phase 1 quickScreen for screener stocks — they're already filtered.
+  //   4. Deep-score as many as the FMP call budget allows.
+  //
+  // FMP free tier (250 calls/day):
+  //   Manual items: up to 5 × 7 calls = 35 calls
+  //   Screener stocks: (250 - 35) / 7 = ~30 deep scores
+  //   Total: ~35 stocks/full-run — whole screener universe covered in ~8 days
+  //
+  // FMP paid (Starter, unlimited):
+  //   Score all 250–500 screener stocks every single day.
+  //
+  // The daily analysis limit (config.dailyAnalysisLimit) controls how many
+  // screener stocks get deep-scored per run. Manual items are always unlimited.
+
+  const dailyLimit = config.dailyAnalysisLimit ?? 30
+
+  // Manual watchlist items — user-curated, always scored
   const allWatchlist = await prisma.watchlistItem.findMany({
     where: { isActive: true },
     include: { stock: true },
   })
-
-  const dailyLimit = config.dailyAnalysisLimit ?? 25
-  const manualItems = allWatchlist.filter(w => !w.notes?.startsWith('Auto-discovered') && !w.notes?.startsWith('Yahoo value screen'))
-
-  // Yahoo-highlighted: appeared in Yahoo value screen recently
-  const yahooHighlighted = allWatchlist.filter(w => w.notes?.startsWith('Yahoo value screen'))
-
-  // Previously scored auto-discovered: sort by last score desc (closest to buy threshold first)
-  const prevScored = allWatchlist
-    .filter(w => (w.notes?.startsWith('Auto-discovered') || w.notes?.startsWith('SEC')) && w.lastScore !== null)
-    .sort((a, b) => (b.lastScore ?? 0) - (a.lastScore ?? 0))
-
-  // Never analyzed: rotate through these daily to build coverage
-  const neverAnalyzed = allWatchlist.filter(w => w.lastAnalyzedAt === null && !w.notes?.startsWith('Yahoo value screen'))
-  const dayN = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
-
-  // Fill slots in priority order
-  const slotsLeft = Math.max(0, dailyLimit - manualItems.length)
-  const selected = new Set(manualItems.map(w => w.id))
-  const candidates: typeof allWatchlist = [...manualItems]
-
-  // Add Yahoo-highlighted first (up to half remaining slots)
-  const yahooSlots = Math.min(yahooHighlighted.length, Math.floor(slotsLeft / 2))
-  for (const item of yahooHighlighted.slice(0, yahooSlots)) {
-    if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
-  }
-
-  // Add previously high-scoring stocks
-  for (const item of prevScored) {
-    if (candidates.length >= dailyLimit) break
-    if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
-  }
-
-  // Fill remaining slots with never-analyzed (rotating batch)
-  if (candidates.length < dailyLimit && neverAnalyzed.length > 0) {
-    const start = (dayN * dailyLimit) % neverAnalyzed.length
-    const batch = [
-      ...neverAnalyzed.slice(start, start + dailyLimit),
-      ...neverAnalyzed.slice(0, Math.max(0, start + dailyLimit - neverAnalyzed.length)),
-    ]
-    for (const item of batch) {
-      if (candidates.length >= dailyLimit) break
-      if (!selected.has(item.id)) { candidates.push(item); selected.add(item.id) }
-    }
-  }
-
-  // Two-phase analysis:
-  // Phase 1 — quick screen (2 FMP calls each) up to 4× dailyLimit candidates
-  // Phase 2 — full deep analysis (7 FMP calls each) only on Phase 1 survivors
-  // Budget-aware two-phase analysis (FMP free = 250 calls/day):
-  // Phase 1: quickScreen 50 stocks × 2 calls = 100 calls
-  // Phase 2: getCompleteFundamentals 20 stocks × 7 calls = 140 calls
-  // Deferred: news+insider+earnings only for stocks scoring 35+ = ~3 calls × 5 = 15 calls
-  // Total: ~255 calls — within free tier
-  const tradeResults: any[] = []
-  const screenPool = candidates.slice(0, dailyLimit * 2)  // 50 stocks for Phase 1
-  const phase1Results = await Promise.allSettled(
-    screenPool.map(item => quickScreen(item.stock.ticker).then(r => ({ item, quick: r })))
+  const manualItems = allWatchlist.filter(
+    w => !w.notes?.startsWith('Auto-discovered') &&
+         !w.notes?.startsWith('Yahoo value screen') &&
+         !w.notes?.startsWith('SEC')
   )
 
-  const deepAnalysisCandidates = phase1Results
-    .filter((r): r is PromiseFulfilledResult<{ item: typeof candidates[0]; quick: NonNullable<Awaited<ReturnType<typeof quickScreen>>> }> =>
-      r.status === 'fulfilled' && r.value.quick !== null && r.value.quick.price > 0
-    )
-    .map(r => r.value)
-    .filter(({ quick }) => {
-      // Must pass at least one value signal to warrant full analysis
-      const hasValuePE = quick.pe !== null && quick.pe > 0 && quick.pe < 35
-      const hasValuePB = quick.pb !== null && quick.pb > 0 && quick.pb < 4
-      const hasROE = quick.roe !== null && quick.roe > 0.05
-      return hasValuePE || hasValuePB || (hasROE && quick.marketCap > 0)
-    })
-    .slice(0, dailyLimit)
-
-  // Mark Phase 1 failures as skipped
-  for (const r of phase1Results) {
-    if (r.status === 'fulfilled' && r.value.quick === null) {
-      tradeResults.push({ ticker: r.value.item.stock.ticker, action: 'SKIP', reason: 'No price data (Phase 1)' })
-      prisma.watchlistItem.update({
-        where: { stockId: r.value.item.stockId },
-        data: { lastAction: 'SKIP', lastSkipReason: 'No price data', lastAnalyzedAt: new Date() },
-      }).catch(() => {})
+  // FMP screener universe — fresh each run, pre-filtered by value criteria
+  // Two passes: deep value (PE≤15, PB≤1.5) and wider zone (PE≤20, PB≤2.5)
+  let screenerTickers: string[] = []
+  try {
+    const [deepValue, widerValue] = await Promise.all([
+      screenStocks({ peRatioLowerThan: 15, priceToBookLowerThan: 1.5, marketCapMoreThan: 300_000_000, limit: 250 }),
+      screenStocks({ peRatioLowerThan: 20, priceToBookLowerThan: 2.5, marketCapMoreThan: 300_000_000, limit: 250 }),
+    ])
+    const seen = new Set<string>()
+    // Deep value first — these are the highest-conviction Graham candidates
+    for (const r of [...deepValue, ...widerValue]) {
+      if (!seen.has(r.symbol) && !r.symbol.includes('.') && !r.symbol.includes('-')) {
+        seen.add(r.symbol)
+        screenerTickers.push(r.symbol)
+      }
     }
+    discoveryResults.push({ action: 'FMP_SCREENER', deepValue: deepValue.length, widerValue: widerValue.length, unique: screenerTickers.length })
+  } catch {
+    discoveryResults.push({ action: 'FMP_SCREENER', error: 'screener call failed — falling back to watchlist' })
   }
 
-  const watchlist = deepAnalysisCandidates.map(d => d.item)
+  // Remove manual tickers from screener list (they're already covered)
+  const manualTickers = new Set(manualItems.map(w => w.stock.ticker))
+  screenerTickers = screenerTickers.filter(t => !manualTickers.has(t))
+
+  // Cap screener tickers to daily limit (budget management)
+  const screenerBatch = screenerTickers.slice(0, dailyLimit)
+
+  // Build the final analysis list:
+  //   Shape: { ticker, stockId? } — stockId present for watchlist items, undefined for screener-only
+  type AnalysisTarget = { ticker: string; watchlistItem?: typeof allWatchlist[0] }
+  const analysisTargets: AnalysisTarget[] = [
+    ...manualItems.map(w => ({ ticker: w.stock.ticker, watchlistItem: w })),
+    ...screenerBatch.map(t => ({ ticker: t })),
+  ]
+
+  const tradeResults: any[] = []
+  const watchlist = analysisTargets  // renamed for minimal diff below
 
   for (const item of watchlist) {
+    const ticker = item.ticker
+    const wl = item.watchlistItem  // present for manual stocks, undefined for screener stocks
     try {
-      const fundamentals = await getCompleteFundamentals(item.stock.ticker)
+      const fundamentals = await getCompleteFundamentals(ticker)
       if (fundamentals.price <= 0) {
-        tradeResults.push({ ticker: item.stock.ticker, action: 'SKIP', reason: 'No price data from FMP' })
+        tradeResults.push({ ticker, action: 'SKIP', reason: 'No price data from FMP' })
         continue
       }
       if (macro?.treasury10yr) {
@@ -413,30 +395,29 @@ export async function POST(request: NextRequest) {
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding, discountRate)
 
-      // Persist IV + stock metadata so watchlist can display without live API calls
-      Promise.all([
-        prisma.intrinsicValue.create({
-          data: {
-            stockId: item.stockId,
-            currentPrice: fundamentals.price,
-            grahamNumber: iv.grahamNumber ?? null,
-            dcfValue: iv.dcfValue ?? null,
-            intrinsicValue: iv.intrinsicValue,
-            marginOfSafety: iv.marginOfSafety,
-            isBuySignal: iv.isBuySignal ?? false,
-            ownerEarnings: fundamentals.ownerEarnings ?? null,
-            discountRateUsed: discountRate,
-          },
-        }),
-        prisma.stock.update({
-          where: { id: item.stockId },
-          data: {
-            name: fundamentals.name,
-            sector: fundamentals.sector ?? undefined,
-            industry: fundamentals.industry ?? undefined,
-          },
-        }),
-      ]).catch(() => {})
+      // Upsert stock + persist IV for watchlist items that have a DB record
+      if (wl) {
+        const stock = await prisma.stock.upsert({
+          where: { ticker },
+          create: { ticker, name: fundamentals.name, sector: fundamentals.sector, industry: fundamentals.industry, exchange: fundamentals.exchange },
+          update: { name: fundamentals.name, sector: fundamentals.sector ?? undefined, industry: fundamentals.industry ?? undefined },
+        })
+        Promise.all([
+          prisma.intrinsicValue.create({
+            data: {
+              stockId: stock.id,
+              currentPrice: fundamentals.price,
+              grahamNumber: iv.grahamNumber ?? null,
+              dcfValue: iv.dcfValue ?? null,
+              intrinsicValue: iv.intrinsicValue,
+              marginOfSafety: iv.marginOfSafety,
+              isBuySignal: iv.isBuySignal ?? false,
+              ownerEarnings: fundamentals.ownerEarnings ?? null,
+              discountRateUsed: discountRate,
+            },
+          }),
+        ]).catch(() => {})
+      }
 
       // Deep-value dampening
       const isDeepValue = fundamentals.isNetNet || (fundamentals.capeRatio !== undefined && fundamentals.capeRatio < 12)
@@ -445,24 +426,23 @@ export async function POST(request: NextRequest) {
         : effectiveMinScore
 
       // Quick pre-score without news/insider to save FMP calls.
-      // Only fetch news/insider/earnings if the stock could plausibly qualify.
       const quickPhilosophy = scoreBuyDecision(fundamentals, criteria, iv, undefined, undefined)
       const couldQualify = quickPhilosophy.vetoedBy.length === 0 && quickPhilosophy.total >= (stockMinScore - 15)
 
-      // Fetch news/insider/earnings only for promising candidates (saves ~3 FMP calls per skip)
+      // Fetch news/insider only for promising candidates
       let news: Awaited<ReturnType<typeof getTickerNews>> | undefined
       let insider: Awaited<ReturnType<typeof getInsiderTransactions>> | undefined
       if (couldQualify) {
         ;[news, insider] = await Promise.all([
-          getTickerNews(item.stock.ticker).catch(() => undefined),
-          getInsiderTransactions(item.stock.ticker).catch(() => undefined),
+          getTickerNews(ticker).catch(() => undefined),
+          getInsiderTransactions(ticker).catch(() => undefined),
         ])
       }
       const philosophy = scoreBuyDecision(fundamentals, criteria, iv, news, insider)
 
-      // Earnings check — only for stocks that scored well enough to matter
+      // Earnings check — only for promising candidates
       if (couldQualify) {
-        const earningsEvents = await getEarningsCalendar(item.stock.ticker).catch(() => [])
+        const earningsEvents = await getEarningsCalendar(ticker).catch(() => [])
         const today = new Date()
         const earningsIn21Days = earningsEvents.some(e => {
           const d = new Date(e.date)
@@ -470,30 +450,21 @@ export async function POST(request: NextRequest) {
           return daysUntil >= 0 && daysUntil <= 21
         })
         if (earningsIn21Days) {
-          tradeResults.push({
-            ticker: item.stock.ticker,
-            action: 'SKIP',
-            score: philosophy.total,
-            mos: iv.marginOfSafety,
-            reason: 'Earnings within 21 days — waiting for clarity',
-          })
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Earnings within 21 days — waiting for clarity' })
           continue
         }
       }
 
-      // Run moat analysis for promising candidates (score 35+)
-      // This adds qualitative intelligence on top of quantitative scoring
+      // Moat analysis for score 35+
       let moatAdj = 0
       let moatData: Awaited<ReturnType<typeof analyzeMoat>> = null
       if (philosophy.total >= 35 && process.env.ANTHROPIC_API_KEY) {
-        moatData = await analyzeMoat(item.stock.ticker, fundamentals.name, philosophy.total, iv.marginOfSafety).catch(() => null)
+        moatData = await analyzeMoat(ticker, fundamentals.name, philosophy.total, iv.marginOfSafety).catch(() => null)
         if (moatData) {
           moatAdj = moatScoreAdjustment(moatData)
-          // Persist to DB (fire-and-forget)
           prisma.moatAnalysis.create({
             data: {
-              ticker: item.stock.ticker,
-              stockId: item.stockId,
+              ticker,
               companyName: fundamentals.name,
               moatScore: moatData.moatScore,
               moatType: moatData.moatType,
@@ -512,22 +483,33 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Combined score: quantitative philosophy + qualitative moat adjustment
+      // Combined score
       const combinedScore = philosophy.total + moatAdj
 
-      // Hard veto from moat analysis — avoid companies with no moat and bad management
+      // Persist to score leaderboard
+      upsertStockScore({
+        ticker,
+        name:          fundamentals.name,
+        sector:        fundamentals.sector,
+        price:         fundamentals.price,
+        score:         combinedScore,
+        mos:           iv.marginOfSafety,
+        intrinsicValue: iv.intrinsicValue,
+        grahamNumber:  iv.grahamNumber,
+        pe:            fundamentals.pe,
+        pb:            fundamentals.pb,
+        signal:        philosophy.signal,
+        conviction:    philosophy.conviction,
+        vetoCount:     philosophy.vetoedBy.length,
+        vetoReasons:   philosophy.vetoedBy.map((p: any) => p.title),
+        source:        'autopilot',
+      }).catch(() => {})
+
+      // Hard veto from moat analysis
       if (moatData?.verdict === 'avoid' && moatData.moatScore < 2) {
-        tradeResults.push({
-          ticker: item.stock.ticker,
-          action: 'VETOED',
-          score: combinedScore,
-          mos: iv.marginOfSafety,
-          reason: `Moat analysis veto: ${moatData.thesis}`,
-          moatScore: moatData.moatScore,
-          thesis: moatData.thesis,
-        })
-        prisma.watchlistItem.update({
-          where: { stockId: item.stockId },
+        tradeResults.push({ ticker, action: 'VETOED', score: combinedScore, mos: iv.marginOfSafety, reason: `Moat analysis veto: ${moatData.thesis}`, moatScore: moatData.moatScore, thesis: moatData.thesis })
+        if (wl) prisma.watchlistItem.update({
+          where: { stockId: wl.stockId },
           data: { lastScore: combinedScore, lastMos: iv.marginOfSafety, lastAction: 'VETOED', lastSkipReason: `Moat veto: ${moatData.thesis.slice(0, 100)}`, lastAnalyzedAt: new Date() },
         }).catch(() => {})
         continue
@@ -556,40 +538,23 @@ export async function POST(request: NextRequest) {
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
           : `Score ${combinedScore} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}${moatData ? ` | Moat ${moatData.moatScore}/10` : ''}`
-        tradeResults.push({
-          ticker: item.stock.ticker,
-          action,
-          score: combinedScore,
-          mos: iv.marginOfSafety,
-          grahamNumber: iv.grahamNumber,
-          dcfValue: iv.dcfValue,
-          reason: skipReason,
-          moatScore: moatData?.moatScore,
-          thesis: moatData?.thesis,
-        })
-        prisma.watchlistItem.update({
-          where: { stockId: item.stockId },
+        tradeResults.push({ ticker, action, score: combinedScore, mos: iv.marginOfSafety, grahamNumber: iv.grahamNumber, dcfValue: iv.dcfValue, reason: skipReason, moatScore: moatData?.moatScore, thesis: moatData?.thesis })
+        if (wl) prisma.watchlistItem.update({
+          where: { stockId: wl.stockId },
           data: { lastScore: combinedScore, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
         }).catch(() => {})
         continue
       }
 
       if (config.mode === 'paper') {
-        // Daily trade limit check
         if (dailyBuys >= (config.maxDailyTrades ?? 5)) {
-          tradeResults.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily trade limit reached' })
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily trade limit reached' })
           continue
         }
 
         const stock = await prisma.stock.upsert({
-          where: { ticker: item.stock.ticker },
-          create: {
-            ticker: item.stock.ticker,
-            name: fundamentals.name,
-            sector: fundamentals.sector,
-            industry: fundamentals.industry,
-            exchange: fundamentals.exchange,
-          },
+          where: { ticker },
+          create: { ticker, name: fundamentals.name, sector: fundamentals.sector, industry: fundamentals.industry, exchange: fundamentals.exchange },
           update: { name: fundamentals.name },
         })
 
@@ -620,28 +585,20 @@ export async function POST(request: NextRequest) {
         })
 
         if (!allocation.canAllocate) {
-          tradeResults.push({
-            ticker: item.stock.ticker,
-            action: 'SKIP',
-            score: philosophy.total,
-            mos: iv.marginOfSafety,
-            reason: allocation.reason,
-          })
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: allocation.reason })
           continue
         }
 
-        // Daily notional limit check
         if (dailyNotional + allocation.dollarAmount > (config.maxDailyNotional ?? 2000)) {
-          tradeResults.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily notional limit reached' })
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Daily notional limit reached' })
           continue
         }
 
-        // Single trade notional clamp
         if (allocation.dollarAmount > (config.maxSingleNotional ?? 1000)) {
           allocation.dollarAmount = config.maxSingleNotional ?? 1000
           allocation.shares = Math.floor(allocation.dollarAmount / fundamentals.price)
           if (allocation.shares < 1) {
-            tradeResults.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Single trade notional clamp resulted in 0 shares' })
+            tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Single trade notional clamp resulted in 0 shares' })
             continue
           }
           allocation.dollarAmount = allocation.shares * fundamentals.price
@@ -650,85 +607,45 @@ export async function POST(request: NextRequest) {
         if (existing) {
           const newShares = existing.shares + allocation.shares
           const newAvg = (existing.shares * existing.avgCostBasis + allocation.shares * fundamentals.price) / newShares
-          await prisma.paperPortfolioItem.update({
-            where: { id: existing.id },
-            data: { shares: newShares, avgCostBasis: newAvg, currentPrice: fundamentals.price },
-          })
+          await prisma.paperPortfolioItem.update({ where: { id: existing.id }, data: { shares: newShares, avgCostBasis: newAvg, currentPrice: fundamentals.price } })
         } else {
           await prisma.paperPortfolioItem.create({
-            data: {
-              stockId: stock.id,
-              shares: allocation.shares,
-              avgCostBasis: fundamentals.price,
-              currentPrice: fundamentals.price,
-              philosophyScore: philosophy.total,
-              conviction: philosophy.conviction,
-              mosAtPurchase: iv.marginOfSafety,
-              auditTrail: [allocation.rationale, ...philosophy.auditTrail.slice(0, 9)],
-            },
+            data: { stockId: stock.id, shares: allocation.shares, avgCostBasis: fundamentals.price, currentPrice: fundamentals.price, philosophyScore: philosophy.total, conviction: philosophy.conviction, mosAtPurchase: iv.marginOfSafety, auditTrail: [allocation.rationale, ...philosophy.auditTrail.slice(0, 9)] },
           })
         }
 
-        // Update sector exposure for subsequent iterations in this run
-        if (fundamentals.sector) {
-          sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
-        }
+        if (fundamentals.sector) sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
         deployedCapital += allocation.dollarAmount
         dailyBuys += 1
         dailyNotional += allocation.dollarAmount
 
         await prisma.alert.create({
           data: {
-            ticker: item.stock.ticker,
+            ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${combinedScore}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}${moatData ? ` | Moat: ${moatData.moatScore}/10 (${moatData.moatType})` : ''}`,
+            message: `PAPER BUY: ${allocation.shares} shares of ${ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${combinedScore}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}${moatData ? ` | Moat: ${moatData.moatScore}/10 (${moatData.moatType})` : ''}`,
             severity: 'buy',
           },
         })
 
-        tradeResults.push({
-          ticker: item.stock.ticker,
-          action: 'PAPER_BUY',
-          shares: allocation.shares,
-          price: fundamentals.price,
-          dollarAmount: allocation.dollarAmount,
-          positionPct: allocation.positionPct,
-          score: philosophy.total,
-          combinedScore,
-          mos: iv.marginOfSafety,
-          conviction: philosophy.conviction,
-          rationale: allocation.rationale,
-          grahamNumber: iv.grahamNumber,
-          dcfValue: iv.dcfValue,
-          intrinsicValue: iv.intrinsicValue,
-          moatScore: moatData?.moatScore,
-          moatType: moatData?.moatType,
-          thesis: moatData?.thesis,
-        })
+        tradeResults.push({ ticker, action: 'PAPER_BUY', shares: allocation.shares, price: fundamentals.price, dollarAmount: allocation.dollarAmount, positionPct: allocation.positionPct, score: philosophy.total, combinedScore, mos: iv.marginOfSafety, conviction: philosophy.conviction, rationale: allocation.rationale, grahamNumber: iv.grahamNumber, dcfValue: iv.dcfValue, intrinsicValue: iv.intrinsicValue, moatScore: moatData?.moatScore, moatType: moatData?.moatType, thesis: moatData?.thesis })
         await Promise.all([
-          sendTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
-          pushTradeNotification({ type: 'buy', ticker: item.stock.ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+          sendTradeNotification({ type: 'buy', ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
+          pushTradeNotification({ type: 'buy', ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
         ])
       } else {
-        tradeResults.push({
-          ticker: item.stock.ticker,
-          action: 'QUEUED_LIVE',
-          score: philosophy.total,
-          mos: iv.marginOfSafety,
-          reason: 'Live execution requires Schwab account connected in Settings',
-        })
+        tradeResults.push({ ticker, action: 'QUEUED_LIVE', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Live execution requires Schwab account connected in Settings' })
       }
     } catch (err: any) {
-      tradeResults.push({ ticker: item.stock.ticker, action: 'ERROR', reason: err.message })
+      tradeResults.push({ ticker, action: 'ERROR', reason: err.message })
     }
   }
 
+  const screenerResult = discoveryResults.find(r => r.action === 'FMP_SCREENER')
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
-    // Discovery phase
-    discoveryEnabled: config.autoDiscovery !== false,
-    newlyDiscovered: discoveryResults.find(r => r.action === 'EDGAR_BULK')?.newStocks ?? 0,
+    screener: screenerResult ? { deepValue: screenerResult.deepValue, widerValue: screenerResult.widerValue, unique: screenerResult.unique, scored: screenerBatch.length } : null,
     discoveryResults,
     macro: macro ? {
       sp500Cape: macro.sp500Cape,
@@ -744,10 +661,9 @@ export async function POST(request: NextRequest) {
     vetoSells: sellResults.filter(r => r.action === 'SOLD_NEWS_VETO').length,
     sellResults,
     // Buy phase
-    watchlistTotal: allWatchlist.length,
-    watchlistScanned: watchlist.length,
-    watchlistManual: manualItems.length,
-    watchlistDiscovered: allWatchlist.filter(w => w.notes?.startsWith('Auto-discovered') || w.notes?.startsWith('Yahoo value screen') || w.notes?.startsWith('SEC')).length,
+    manualWatchlistItems: manualItems.length,
+    screenerCandidatesScored: screenerBatch.length,
+    totalAnalysed: watchlist.length,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
@@ -777,8 +693,8 @@ export async function POST(request: NextRequest) {
     ranAt: summary.ranAt,
     mode: summary.mode,
     macro: summary.macro,
-    watchlistTotal: summary.watchlistTotal,
-    watchlistScanned: summary.watchlistScanned,
+    watchlistTotal: summary.totalAnalysed,
+    watchlistScanned: summary.totalAnalysed,
     buys: summary.buys,
     sells: summary.sells ?? 0,
     skipped: summary.skipped,
