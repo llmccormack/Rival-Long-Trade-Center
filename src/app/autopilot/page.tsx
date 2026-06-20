@@ -306,7 +306,7 @@ export default function AutopilotPage() {
             Every trade routed through 130+ Graham · Buffett · Fisher principles. Paper trading only by default.
           </p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           <div className="flex rounded-lg bg-zinc-900 border border-zinc-800 p-0.5">
             <button
               onClick={() => setMode('paper')}
@@ -411,16 +411,16 @@ export default function AutopilotPage() {
         const cls = tempColors[temp] ?? 'border-zinc-700 bg-zinc-900 text-zinc-400'
         return (
           <div className={`rounded-xl border px-4 py-3 ${cls}`}>
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-3">
-                <div className="text-[10px] font-medium uppercase tracking-widest opacity-70">Market Temperature at Run Time</div>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="text-[10px] font-medium uppercase tracking-widest opacity-70">Market Temperature</div>
                 <span className="font-mono font-bold text-sm uppercase">{temp}</span>
                 <span className="font-mono text-sm opacity-80">CAPE {lastRun.macro.sp500Cape.toFixed(1)}×</span>
               </div>
-              <div className="flex gap-4 text-xs font-mono">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono">
                 <span className="text-zinc-500">10Y: <span className="text-zinc-300">{lastRun.macro.treasury10yr}</span></span>
                 <span className="text-zinc-500">Excess yield: <span className="text-zinc-300">{lastRun.macro.excessEarningsYield}</span></span>
-                <span className="text-zinc-500">Effective score gate: <span className="text-zinc-300">{lastRun.macro.effectiveMinScore}</span></span>
+                <span className="text-zinc-500">Score gate: <span className="text-zinc-300">{lastRun.macro.effectiveMinScore}</span></span>
                 <span className="text-zinc-500">Cash reserve: <span className="text-zinc-300">{lastRun.macro.effectiveCashReservePct.toFixed(0)}%</span></span>
               </div>
             </div>
@@ -445,10 +445,10 @@ export default function AutopilotPage() {
           {fullRunning && (
             <>
               <div className="mb-3 text-xs font-medium uppercase tracking-widest text-violet-400">Full Autopilot Running</div>
-              <div className="flex items-center gap-0">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
                 {[
-                  { n: 1, label: 'Discovering stocks from SEC EDGAR + Yahoo…' },
-                  { n: 2, label: 'Quick-screening value candidates…' },
+                  { n: 1, label: 'Discovering value candidates from FMP screener…' },
+                  { n: 2, label: 'Quick-screening candidates…' },
                   { n: 3, label: 'Deep analysis + moat scoring…' },
                 ].map(({ n, label }, i) => (
                   <div key={n} className="flex items-center gap-0">
@@ -457,14 +457,14 @@ export default function AutopilotPage() {
                       fullRunStep >= n ? 'text-violet-300' : 'text-zinc-600'
                     )}>
                       <span className={cn(
-                        'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold',
+                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
                         fullRunStep > n ? 'bg-violet-600 text-white' :
                         fullRunStep === n ? 'bg-violet-500/30 text-violet-300 ring-1 ring-violet-500 animate-pulse' :
                         'bg-zinc-800 text-zinc-600'
                       )}>{fullRunStep > n ? '✓' : n}</span>
                       {label}
                     </div>
-                    {i < 2 && <span className="text-zinc-700 mx-1">→</span>}
+                    {i < 2 && <span className="text-zinc-700 hidden sm:inline mx-1">→</span>}
                   </div>
                 ))}
               </div>
@@ -566,8 +566,18 @@ export default function AutopilotPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-zinc-800">
-                      {['Ticker', 'Shares', 'Avg Cost', 'Price', 'Value', 'G/L', 'Score', 'MOS', 'Held'].map(h => (
-                        <th key={h} className="pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4">{h}</th>
+                      {[
+                        { label: 'Ticker', hide: '' },
+                        { label: 'Shares', hide: 'hidden sm:table-cell' },
+                        { label: 'Avg Cost', hide: 'hidden md:table-cell' },
+                        { label: 'Price', hide: 'hidden sm:table-cell' },
+                        { label: 'Value', hide: '' },
+                        { label: 'G/L', hide: '' },
+                        { label: 'Score', hide: 'hidden sm:table-cell' },
+                        { label: 'MOS', hide: 'hidden sm:table-cell' },
+                        { label: 'Held', hide: 'hidden md:table-cell' },
+                      ].map(({ label, hide }) => (
+                        <th key={label} className={`pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 pr-4 ${hide}`}>{label}</th>
                       ))}
                     </tr>
                   </thead>
@@ -585,22 +595,22 @@ export default function AutopilotPage() {
                           </div>
                           {p.sector && <div className="text-[10px] text-zinc-600 mt-0.5">{p.sector}</div>}
                         </td>
-                        <td className="py-2.5 pr-4 font-mono text-zinc-400">{p.shares}</td>
-                        <td className="py-2.5 pr-4 font-mono text-zinc-500">${p.avgCostBasis.toFixed(2)}</td>
-                        <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentPrice.toFixed(2)}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-400 hidden sm:table-cell">{p.shares}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-500 hidden md:table-cell">${p.avgCostBasis.toFixed(2)}</td>
+                        <td className="py-2.5 pr-4 font-mono text-zinc-300 hidden sm:table-cell">${p.currentPrice.toFixed(2)}</td>
                         <td className="py-2.5 pr-4 font-mono text-zinc-300">${p.currentValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                         <td className={cn('py-2.5 pr-4 font-mono text-xs', p.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400')}>
                           {p.gainLoss >= 0 ? '+' : ''}{p.gainLossPct.toFixed(1)}%
                         </td>
-                        <td className="py-2.5 pr-4">
+                        <td className="py-2.5 pr-4 hidden sm:table-cell">
                           <span className={cn('font-mono text-xs', (p.philosophyScore ?? 0) >= 45 ? 'text-violet-400' : 'text-zinc-600')}>
                             {p.philosophyScore ?? '—'}
                           </span>
                         </td>
-                        <td className={cn('py-2.5 pr-4 font-mono text-xs', (p.mosAtPurchase ?? 0) >= 15 ? 'text-emerald-400' : 'text-amber-400')}>
+                        <td className={cn('py-2.5 pr-4 font-mono text-xs hidden sm:table-cell', (p.mosAtPurchase ?? 0) >= 15 ? 'text-emerald-400' : 'text-amber-400')}>
                           {p.mosAtPurchase != null ? `${p.mosAtPurchase.toFixed(1)}%` : '—'}
                         </td>
-                        <td className="py-2.5 font-mono text-xs text-zinc-600">
+                        <td className="py-2.5 font-mono text-xs text-zinc-600 hidden md:table-cell">
                           {p.daysHeld != null ? `${p.daysHeld}d` : '—'}
                         </td>
                       </tr>

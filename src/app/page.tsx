@@ -166,7 +166,12 @@ export default async function DashboardPage() {
                   {['Ticker', 'Name', 'Price', 'MOS', 'Score', '', 'Signal'].map(h => (
                     <th key={h} className={cn(
                       'py-2.5 text-[10px] font-medium uppercase tracking-widest text-zinc-600',
-                      h === '' ? 'px-3' : h === 'Ticker' ? 'pl-4 pr-3 text-left' : h === 'Name' ? 'px-3 text-left hidden sm:table-cell' : 'px-3 text-right'
+                      h === '' ? 'px-3 hidden md:table-cell' :
+                      h === 'Ticker' ? 'pl-4 pr-3 text-left' :
+                      h === 'Name' ? 'px-3 text-left hidden sm:table-cell' :
+                      h === 'Price' ? 'px-3 text-right hidden sm:table-cell' :
+                      h === 'MOS' ? 'px-3 text-right hidden sm:table-cell' :
+                      'px-3 text-right'
                     )}>{h}</th>
                   ))}
                 </tr>
@@ -180,8 +185,8 @@ export default async function DashboardPage() {
                       </Link>
                     </td>
                     <td className="px-3 py-3 text-xs text-zinc-500 max-w-[140px] truncate hidden sm:table-cell">{s.name ?? '—'}</td>
-                    <td className="px-3 py-3 text-right font-mono text-xs text-zinc-400">${s.price?.toFixed(2) ?? '—'}</td>
-                    <td className={cn('px-3 py-3 text-right font-mono text-xs', s.mos >= 30 ? 'text-emerald-400' : s.mos > 0 ? 'text-amber-400' : 'text-zinc-600')}>
+                    <td className="px-3 py-3 text-right font-mono text-xs text-zinc-400 hidden sm:table-cell">${s.price?.toFixed(2) ?? '—'}</td>
+                    <td className={cn('px-3 py-3 text-right font-mono text-xs hidden sm:table-cell', s.mos >= 30 ? 'text-emerald-400' : s.mos > 0 ? 'text-amber-400' : 'text-zinc-600')}>
                       {s.mos != null ? `${s.mos.toFixed(1)}%` : '—'}
                     </td>
                     <td className="px-3 py-3 text-right">
@@ -192,7 +197,7 @@ export default async function DashboardPage() {
                         {s.score}
                       </span>
                     </td>
-                    <td className="px-3 py-3 w-24 hidden md:table-cell">
+                    <td className="px-3 py-3 w-24 hidden md:table-cell" aria-hidden="true">
                       <ScoreBar score={s.score} threshold={threshold} />
                     </td>
                     <td className="px-3 py-3 text-right">

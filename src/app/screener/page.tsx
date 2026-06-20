@@ -113,7 +113,7 @@ export default function ScreenerPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 gap-1 w-fit">
+      <div className="flex rounded-xl border border-zinc-800 bg-zinc-900/60 p-1 gap-1 w-full sm:w-fit overflow-x-auto">
         <button
           onClick={() => setTab('scores')}
           className={cn(
@@ -222,15 +222,15 @@ export default function ScreenerPage() {
                   <thead>
                     <tr className="border-b border-zinc-800 bg-zinc-900">
                       <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Name</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Sector</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Price</th>
-                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">P/E</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Name</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden lg:table-cell">Sector</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Price</th>
+                      <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden md:table-cell">P/E</th>
                       <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">MOS</th>
                       <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Score</th>
-                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 min-w-[120px]">Progress to buy</th>
+                      <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 min-w-[120px] hidden md:table-cell">Progress</th>
                       <th className="px-4 py-3 text-center text-[10px] font-medium uppercase tracking-widest text-zinc-600">Signal</th>
-                      <th className="px-4 py-3 text-[10px] font-medium uppercase tracking-widest text-zinc-600">Source</th>
+                      <th className="px-4 py-3 text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden lg:table-cell">Source</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60">
@@ -244,10 +244,10 @@ export default function ScreenerPage() {
                               {s.ticker}
                             </a>
                           </td>
-                          <td className="px-4 py-3 text-xs text-zinc-400 max-w-[160px] truncate">{s.name ?? '—'}</td>
-                          <td className="px-4 py-3 text-[11px] text-zinc-600">{s.sector ?? '—'}</td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300">${s.price?.toFixed(2) ?? '—'}</td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-400">{s.pe?.toFixed(1) ?? '—'}</td>
+                          <td className="px-4 py-3 text-xs text-zinc-400 max-w-[160px] truncate hidden sm:table-cell">{s.name ?? '—'}</td>
+                          <td className="px-4 py-3 text-[11px] text-zinc-600 hidden lg:table-cell">{s.sector ?? '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 hidden sm:table-cell">${s.price?.toFixed(2) ?? '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-zinc-400 hidden md:table-cell">{s.pe?.toFixed(1) ?? '—'}</td>
                           <td className={cn('px-4 py-3 text-right font-mono text-xs', s.mos >= 30 ? 'text-emerald-400' : s.mos > 0 ? 'text-amber-400' : 'text-red-400')}>
                             {s.mos?.toFixed(1) ?? '—'}%
                           </td>
@@ -263,17 +263,16 @@ export default function ScreenerPage() {
                             </span>
                             <span className="text-[10px] text-zinc-700">/100</span>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 hidden md:table-cell">
                             <div className="flex items-center gap-2">
                               <div className="relative h-1.5 flex-1 rounded-full bg-zinc-800">
                                 <div
                                   className={cn('h-full rounded-full transition-all', overThreshold ? 'bg-emerald-500' : 'bg-violet-600/60')}
                                   style={{ width: `${pct}%` }}
                                 />
-                                {/* Buy threshold marker */}
                                 <div className="absolute top-1/2 -translate-y-1/2 w-px h-3 bg-zinc-500" style={{ left: '100%' }} />
                               </div>
-                              {overThreshold && <span className="text-[10px] text-emerald-500 whitespace-nowrap">✓ buy</span>}
+                              {overThreshold && <span className="text-[10px] text-emerald-500 whitespace-nowrap">✓</span>}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -286,7 +285,7 @@ export default function ScreenerPage() {
                               {s.vetoCount > 0 && s.signal !== 'BUY' ? 'VETO' : s.signal}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-[10px] text-zinc-700 uppercase">{s.source}</td>
+                          <td className="px-4 py-3 text-[10px] text-zinc-700 uppercase hidden lg:table-cell">{s.source}</td>
                         </tr>
                       )
                     })}
@@ -397,15 +396,15 @@ export default function ScreenerPage() {
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900">
                     <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Ticker</th>
-                    <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Name</th>
-                    <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">Sector</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Price</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">P/E</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">P/B</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Name</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden lg:table-cell">Sector</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell">Price</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden md:table-cell">P/E</th>
+                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden md:table-cell">P/B</th>
                     <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">MOS</th>
                     <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600">Score</th>
                     <th className="px-4 py-3 text-center text-[10px] font-medium uppercase tracking-widest text-zinc-600">Signal</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600"></th>
+                    <th className="px-4 py-3 text-right text-[10px] font-medium uppercase tracking-widest text-zinc-600 hidden sm:table-cell"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
@@ -416,11 +415,11 @@ export default function ScreenerPage() {
                           {r.ticker}
                         </a>
                       </td>
-                      <td className="px-4 py-3 text-xs text-zinc-400 max-w-[160px] truncate">{r.name}</td>
-                      <td className="px-4 py-3 text-[11px] text-zinc-600">{r.sector ?? '—'}</td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300">${r.price?.toFixed(2) ?? '—'}</td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300">{r.pe?.toFixed(1) ?? '—'}</td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300">{r.pb?.toFixed(2) ?? '—'}</td>
+                      <td className="px-4 py-3 text-xs text-zinc-400 max-w-[160px] truncate hidden sm:table-cell">{r.name}</td>
+                      <td className="px-4 py-3 text-[11px] text-zinc-600 hidden lg:table-cell">{r.sector ?? '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 hidden sm:table-cell">${r.price?.toFixed(2) ?? '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 hidden md:table-cell">{r.pe?.toFixed(1) ?? '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 hidden md:table-cell">{r.pb?.toFixed(2) ?? '—'}</td>
                       <td className={cn('px-4 py-3 text-right font-mono text-xs', r.mos >= 30 ? 'text-emerald-400' : r.mos > 0 ? 'text-amber-400' : 'text-red-400')}>
                         {r.mos > 0 ? `${r.mos.toFixed(1)}%` : `${r.mos.toFixed(1)}%`}
                       </td>
@@ -446,7 +445,7 @@ export default function ScreenerPage() {
                           {r.vetoCount > 0 && r.signal !== 'BUY' ? 'VETO' : r.signal}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right hidden sm:table-cell">
                         <a href={`/analysis/${r.ticker}`} className="text-[11px] text-zinc-600 hover:text-violet-400 transition-colors whitespace-nowrap">
                           Analyse →
                         </a>
