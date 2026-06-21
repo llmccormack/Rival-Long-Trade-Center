@@ -265,9 +265,16 @@ export default async function DashboardPage() {
 
       {/* ── Daily rundown ────────────────────────────────────────────────── */}
       {config?.dailyRundown && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-600 mb-2">Latest Rundown</div>
-          <p className="text-sm text-zinc-400 leading-relaxed">{config.dailyRundown as string}</p>
+        <div className="rounded-xl border border-violet-900/30 bg-violet-950/20 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-violet-500">Morning Rundown</span>
+            {lastRun && (
+              <span className="text-[10px] text-zinc-700">
+                {new Date(lastRun.toLocaleString()).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-zinc-300 leading-relaxed">{config.dailyRundown as string}</p>
         </div>
       )}
 
