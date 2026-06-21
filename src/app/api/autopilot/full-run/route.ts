@@ -15,6 +15,7 @@ import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
 import { getSecTickers, getDailyBatch } from '@/lib/sec/tickers'
 import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
+import { getDailyBatch as getValueUniverseBatch } from '@/lib/universe/tickers'
 import { analyzeMoat, moatScoreAdjustment } from '@/lib/ai/moat-analysis'
 import { upsertStockScore } from '@/lib/philosophy/persist-score'
 
@@ -338,16 +339,26 @@ export async function POST(request: NextRequest) {
          !w.notes?.startsWith('SEC')
   )
 
-  // FMP screener universe — fresh each run, pre-filtered by value criteria
-  // Two passes: deep value (PE≤15, PB≤1.5) and wider zone (PE≤20, PB≤2.5)
+  // ── Universe: FMP screener (paid) → fallback to curated value universe ──────
+  //
+  // FMP's /stock-screener with PE/PB filters requires a paid plan.
+  // On the free tier it returns an error object or empty array.
+  // If the screener returns 0 results we fall back to a curated ~300-ticker
+  // value universe (S&P 500 value names, dividend payers, financials, etc.)
+  // rotated in daily batches so the full list is covered every ~10 days.
+  //
+  // Either way, every candidate goes through quickScreen (2 FMP calls) to
+  // confirm it actually passes PE≤20 / PB≤2.5 before burning 7 calls on
+  // getCompleteFundamentals.
+
   let screenerTickers: string[] = []
+  let screenerSource = 'fmp'
   try {
     const [deepValue, widerValue] = await Promise.all([
       screenStocks({ peRatioLowerThan: 15, priceToBookLowerThan: 1.5, marketCapMoreThan: 300_000_000, limit: 250 }),
       screenStocks({ peRatioLowerThan: 20, priceToBookLowerThan: 2.5, marketCapMoreThan: 300_000_000, limit: 250 }),
     ])
     const seen = new Set<string>()
-    // Deep value first — these are the highest-conviction Graham candidates
     for (const r of [...deepValue, ...widerValue]) {
       if (!seen.has(r.symbol) && !r.symbol.includes('.') && !r.symbol.includes('-')) {
         seen.add(r.symbol)
@@ -356,14 +367,33 @@ export async function POST(request: NextRequest) {
     }
     discoveryResults.push({ action: 'FMP_SCREENER', deepValue: deepValue.length, widerValue: widerValue.length, unique: screenerTickers.length })
   } catch {
-    discoveryResults.push({ action: 'FMP_SCREENER', error: 'screener call failed — falling back to watchlist' })
+    discoveryResults.push({ action: 'FMP_SCREENER', error: 'screener unavailable' })
   }
 
-  // Remove manual tickers from screener list (they're already covered)
+  // Fallback: FMP screener returned nothing (free tier or error) → curated universe
+  if (screenerTickers.length === 0) {
+    screenerSource = 'universe'
+    // Take today's rotating batch from the curated value universe (~30 tickers)
+    const universeBatch = getValueUniverseBatch(dailyLimit * 2) // 2× so some survive quickScreen
+    // Quick-screen each: 2 FMP calls/ticker to verify PE≤20 and PB≤2.5
+    const quickResults = await Promise.all(
+      universeBatch.map(t => quickScreen(t).catch(() => null))
+    )
+    for (const r of quickResults) {
+      if (!r) continue
+      const peOk = r.pe == null || r.pe <= 20
+      const pbOk = r.pb == null || r.pb <= 2.5
+      const capOk = r.marketCap >= 300_000_000
+      if (peOk && pbOk && capOk) screenerTickers.push(r.ticker)
+    }
+    discoveryResults.push({ action: 'UNIVERSE_FALLBACK', batch: universeBatch.length, passing: screenerTickers.length })
+  }
+
+  // Remove manual tickers (already covered above)
   const manualTickers = new Set(manualItems.map(w => w.stock.ticker))
   screenerTickers = screenerTickers.filter(t => !manualTickers.has(t))
 
-  // Cap screener tickers to daily limit (budget management)
+  // Cap to daily limit
   const screenerBatch = screenerTickers.slice(0, dailyLimit)
 
   // Build the final analysis list:
@@ -641,11 +671,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const screenerResult = discoveryResults.find(r => r.action === 'FMP_SCREENER')
+  const screenerResult   = discoveryResults.find(r => r.action === 'FMP_SCREENER')
+  const universeResult   = discoveryResults.find(r => r.action === 'UNIVERSE_FALLBACK')
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
-    screener: screenerResult ? { deepValue: screenerResult.deepValue, widerValue: screenerResult.widerValue, unique: screenerResult.unique, scored: screenerBatch.length } : null,
+    universeSource: screenerSource,
+    screener: screenerResult
+      ? { deepValue: screenerResult.deepValue, widerValue: screenerResult.widerValue, unique: screenerResult.unique, scored: screenerBatch.length }
+      : universeResult
+      ? { source: 'curated universe', batch: universeResult.batch, passing: universeResult.passing, scored: screenerBatch.length }
+      : null,
     discoveryResults,
     macro: macro ? {
       sp500Cape: macro.sp500Cape,
