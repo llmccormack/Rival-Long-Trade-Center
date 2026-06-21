@@ -1,100 +1,466 @@
 {
-  "runAt": "2026-05-18T14:54:41.921Z",
-  "universe": [
-    "JPM",
-    "BAC",
-    "WFC",
-    "BRK-B",
-    "USB",
-    "TRV",
-    "AFL",
-    "CB",
-    "MMM",
-    "GE",
-    "HON",
-    "CAT",
-    "DE",
-    "EMR",
-    "ITW",
-    "PH",
-    "KO",
-    "PG",
-    "JNJ",
-    "MCD",
-    "WMT",
-    "CL",
-    "KMB",
-    "GIS",
-    "AAPL",
-    "MSFT",
-    "CSCO",
-    "INTC",
-    "IBM",
-    "QCOM",
-    "TXN",
-    "AMAT",
-    "XOM",
-    "CVX",
-    "COP",
-    "PSX",
-    "MPC",
-    "OXY",
-    "ABT",
-    "MDT",
-    "BMY",
-    "ABBV",
-    "MRK",
-    "PFE",
-    "UNH",
-    "CVS",
-    "LIN",
-    "APD",
-    "NEM",
-    "FCX",
-    "NEE",
-    "DUK",
-    "SO",
-    "D",
-    "AMT",
-    "O"
-  ],
-  "totalDataPoints": 0,
-  "apiCallsUsed": 225,
-  "bucketSummary": [
+  "metadata": {
+    "run_at": "2026-06-06T19:45:36.943205",
+    "start": "2010-01-01",
+    "end": "2024-12-31",
+    "universe_size": 76,
+    "initial_capital": 100000,
+    "strategy": "Graham/Buffett Value \u2014 PE<22, PB<2.5, D/E<1.5, CR>1.2, MOS>15%"
+  },
+  "performance": {
+    "strategy_cagr": 3.71,
+    "spy_cagr": 13.69,
+    "alpha": -9.97,
+    "total_return": 72.7,
+    "spy_total_return": 583.77,
+    "sharpe_ratio": 0.23,
+    "max_drawdown": -19.6,
+    "annual_win_rate": 21.4,
+    "final_value": 172695.33,
+    "spy_final_value": 683766.39
+  },
+  "annual_returns": {
+    "2011-12-31 00:00:00": 0.0,
+    "2012-12-31 00:00:00": 0.0,
+    "2013-12-31 00:00:00": 0.0,
+    "2014-12-31 00:00:00": 0.0,
+    "2015-12-31 00:00:00": 0.0,
+    "2016-12-31 00:00:00": 0.0,
+    "2017-12-31 00:00:00": 0.0,
+    "2018-12-31 00:00:00": 0.0,
+    "2019-12-31 00:00:00": 0.0,
+    "2020-12-31 00:00:00": 0.0,
+    "2021-12-31 00:00:00": 0.0,
+    "2022-12-31 00:00:00": 22.74,
+    "2023-12-31 00:00:00": 17.21,
+    "2024-12-31 00:00:00": 20.04
+  },
+  "trades": [
     {
-      "bucket": "BUY (≥70)",
-      "n": 0,
-      "avgReturn": null,
-      "medianReturn": null,
-      "winRate": null,
-      "topQuartileAvg": null
+      "date": "2024-01-03",
+      "ticker": "PRU",
+      "action": "BUY",
+      "price": 91.0,
+      "shares": 132.6116,
+      "mos": 19.9,
+      "graham_number": 113.62
     },
     {
-      "bucket": "WATCHLIST (50–69)",
-      "n": 0,
-      "avgReturn": null,
-      "medianReturn": null,
-      "winRate": null,
-      "topQuartileAvg": null
+      "date": "2024-01-03",
+      "ticker": "AFL",
+      "action": "BUY",
+      "price": 78.85,
+      "shares": 153.031,
+      "mos": 16.4,
+      "graham_number": 94.32
     },
     {
-      "bucket": "NEUTRAL (30–49)",
-      "n": 0,
-      "avgReturn": null,
-      "medianReturn": null,
-      "winRate": null,
-      "topQuartileAvg": null
+      "date": "2024-01-04",
+      "ticker": "BRK-B",
+      "action": "SELL",
+      "price": 363.68,
+      "shares": 32.90303646663906,
+      "proceeds": 11966.18
     },
     {
-      "bucket": "AVOID (<30)",
-      "n": 0,
-      "avgReturn": null,
-      "medianReturn": null,
-      "winRate": null,
-      "topQuartileAvg": null
+      "date": "2024-01-04",
+      "ticker": "WFC",
+      "action": "SELL",
+      "price": 46.49,
+      "shares": 262.7402484863145,
+      "proceeds": 12215.92
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "VLO",
+      "action": "SELL",
+      "price": 121.44,
+      "shares": 96.82078543174546,
+      "proceeds": 11757.7
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "BAC",
+      "action": "SELL",
+      "price": 31.87,
+      "shares": 381.7057407923749,
+      "proceeds": 12164.36
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "MPC",
+      "action": "SELL",
+      "price": 145.78,
+      "shares": 80.42185970322838,
+      "proceeds": 11724.03
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "EMR",
+      "action": "SELL",
+      "price": 91.06,
+      "shares": 133.1114135036803,
+      "proceeds": 12120.72
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "JPM",
+      "action": "SELL",
+      "price": 163.38,
+      "shares": 74.3516472669637,
+      "proceeds": 12147.27
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "PSX",
+      "action": "SELL",
+      "price": 124.32,
+      "shares": 96.72989426744755,
+      "proceeds": 12025.41
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "USB",
+      "action": "SELL",
+      "price": 39.15,
+      "shares": 311.54602098139344,
+      "proceeds": 12197.03
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "CB",
+      "action": "SELL",
+      "price": 222.2,
+      "shares": 54.522055571245126,
+      "proceeds": 12114.63
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "PRU",
+      "action": "SELL",
+      "price": 91.08,
+      "shares": 132.61161607356678,
+      "proceeds": 12077.75
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "AFL",
+      "action": "SELL",
+      "price": 78.01,
+      "shares": 153.030982974443,
+      "proceeds": 11938.09
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "BRK-B",
+      "action": "BUY",
+      "price": 363.68,
+      "shares": 33.0989,
+      "mos": 53.9,
+      "graham_number": 788.34
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "VLO",
+      "action": "BUY",
+      "price": 121.44,
+      "shares": 99.1242,
+      "mos": 50.2,
+      "graham_number": 243.72
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "WFC",
+      "action": "BUY",
+      "price": 46.49,
+      "shares": 258.9012,
+      "mos": 49.7,
+      "graham_number": 92.42
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "BAC",
+      "action": "BUY",
+      "price": 31.87,
+      "shares": 377.7226,
+      "mos": 45.6,
+      "graham_number": 58.54
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "MPC",
+      "action": "BUY",
+      "price": 145.78,
+      "shares": 82.5716,
+      "mos": 41.6,
+      "graham_number": 249.74
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "EMR",
+      "action": "BUY",
+      "price": 91.06,
+      "shares": 132.1967,
+      "mos": 35.0,
+      "graham_number": 140.05
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "PSX",
+      "action": "BUY",
+      "price": 124.32,
+      "shares": 96.8265,
+      "mos": 28.3,
+      "graham_number": 173.29
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "JPM",
+      "action": "BUY",
+      "price": 163.38,
+      "shares": 73.6793,
+      "mos": 27.6,
+      "graham_number": 225.64
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "USB",
+      "action": "BUY",
+      "price": 39.15,
+      "shares": 307.4691,
+      "mos": 26.1,
+      "graham_number": 52.99
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "CB",
+      "action": "BUY",
+      "price": 222.2,
+      "shares": 54.1746,
+      "mos": 21.6,
+      "graham_number": 283.46
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "PRU",
+      "action": "BUY",
+      "price": 91.08,
+      "shares": 132.1688,
+      "mos": 19.8,
+      "graham_number": 113.62
+    },
+    {
+      "date": "2024-01-04",
+      "ticker": "AFL",
+      "action": "BUY",
+      "price": 78.01,
+      "shares": 154.3043,
+      "mos": 17.3,
+      "graham_number": 94.32
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "BRK-B",
+      "action": "SELL",
+      "price": 365.59,
+      "shares": 33.09894437785511,
+      "proceeds": 12100.64
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "VLO",
+      "action": "SELL",
+      "price": 120.22,
+      "shares": 99.12418815121259,
+      "proceeds": 11916.41
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "WFC",
+      "action": "SELL",
+      "price": 47.1,
+      "shares": 258.9011678634524,
+      "proceeds": 12193.76
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "BAC",
+      "action": "SELL",
+      "price": 32.46,
+      "shares": 377.72260254105004,
+      "proceeds": 12261.79
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "MPC",
+      "action": "SELL",
+      "price": 144.93,
+      "shares": 82.57162611944165,
+      "proceeds": 11966.8
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "EMR",
+      "action": "SELL",
+      "price": 91.41,
+      "shares": 132.19666826769077,
+      "proceeds": 12084.26
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "PSX",
+      "action": "SELL",
+      "price": 124.28,
+      "shares": 96.82654109890102,
+      "proceeds": 12033.86
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "JPM",
+      "action": "SELL",
+      "price": 164.2,
+      "shares": 73.6792977459576,
+      "proceeds": 12097.82
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "USB",
+      "action": "SELL",
+      "price": 39.69,
+      "shares": 307.4691275183638,
+      "proceeds": 12204.57
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "CB",
+      "action": "SELL",
+      "price": 222.59,
+      "shares": 54.174610418817714,
+      "proceeds": 12058.61
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "PRU",
+      "action": "SELL",
+      "price": 92.34,
+      "shares": 132.16880598885257,
+      "proceeds": 12204.74
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "AFL",
+      "action": "SELL",
+      "price": 78.41,
+      "shares": 154.3043035217347,
+      "proceeds": 12098.86
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "BRK-B",
+      "action": "BUY",
+      "price": 365.59,
+      "shares": 33.1022,
+      "mos": 53.6,
+      "graham_number": 788.34
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "VLO",
+      "action": "BUY",
+      "price": 120.22,
+      "shares": 100.6666,
+      "mos": 50.7,
+      "graham_number": 243.72
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "WFC",
+      "action": "BUY",
+      "price": 47.1,
+      "shares": 256.9496,
+      "mos": 49.0,
+      "graham_number": 92.42
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "BAC",
+      "action": "BUY",
+      "price": 32.46,
+      "shares": 372.7955,
+      "mos": 44.6,
+      "graham_number": 58.54
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "MPC",
+      "action": "BUY",
+      "price": 144.93,
+      "shares": 83.5034,
+      "mos": 42.0,
+      "graham_number": 249.74
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "EMR",
+      "action": "BUY",
+      "price": 91.41,
+      "shares": 132.3891,
+      "mos": 34.7,
+      "graham_number": 140.05
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "PSX",
+      "action": "BUY",
+      "price": 124.28,
+      "shares": 97.3735,
+      "mos": 28.3,
+      "graham_number": 173.29
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "JPM",
+      "action": "BUY",
+      "price": 164.2,
+      "shares": 73.7038,
+      "mos": 27.2,
+      "graham_number": 225.64
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "USB",
+      "action": "BUY",
+      "price": 39.69,
+      "shares": 304.8811,
+      "mos": 25.1,
+      "graham_number": 52.99
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "CB",
+      "action": "BUY",
+      "price": 222.59,
+      "shares": 54.3689,
+      "mos": 21.5,
+      "graham_number": 283.46
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "PRU",
+      "action": "BUY",
+      "price": 92.34,
+      "shares": 131.0545,
+      "mos": 18.7,
+      "graham_number": 113.62
+    },
+    {
+      "date": "2024-01-05",
+      "ticker": "AFL",
+      "action": "BUY",
+      "price": 78.41,
+      "shares": 154.3424,
+      "mos": 16.9,
+      "graham_number": 94.32
     }
-  ],
-  "yearlyAlpha": [],
-  "sp500Benchmark": {},
-  "allResults": []
+  ]
 }
