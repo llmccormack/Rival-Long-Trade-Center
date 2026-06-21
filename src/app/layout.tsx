@@ -12,14 +12,24 @@ const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Rival Automations — Value Investing Platform',
+  title: 'Graham Capital',
   description: 'Systematic value investing powered by Graham, Buffett, and Fisher philosophy',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'Graham Capital',
+    statusBarStyle: 'black-translucent',
+  },
+  icons: {
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  themeColor: '#09090b',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
