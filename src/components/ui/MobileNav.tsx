@@ -36,9 +36,13 @@ export function MobileNav() {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — cursor-pointer required for iOS to fire onClick on a div */}
       {isOpen && (
-        <div className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden" onClick={close} />
+        <div
+          className="fixed inset-0 z-40 cursor-pointer bg-black/70 backdrop-blur-sm md:hidden"
+          onClick={close}
+          onTouchEnd={close}
+        />
       )}
 
       {/* Drawer */}
@@ -110,13 +114,13 @@ export function MobileNav() {
 
       {/* Bottom tab bar */}
       <nav
-        className="fixed bottom-0 inset-x-0 z-30 flex border-t border-zinc-800 bg-zinc-950 md:hidden"
+        className="fixed bottom-0 inset-x-0 z-50 flex border-t border-zinc-800 bg-zinc-950 md:hidden"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {BOTTOM_TABS.map(tab => {
           const isActive = pathname === tab.href || (tab.href !== '/' && pathname.startsWith(tab.href))
           return (
-            <Link key={tab.href} href={tab.href} className="flex flex-1 flex-col items-center justify-center gap-1 py-2 relative">
+            <Link key={tab.href} href={tab.href} style={{ touchAction: 'manipulation' }} className="flex flex-1 flex-col items-center justify-center gap-1 py-2 relative">
               {isActive && <span className="absolute top-0 inset-x-3 h-px bg-violet-500" />}
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isActive ? 2 : 1.5} className={cn('h-5 w-5', isActive ? 'text-zinc-100' : 'text-zinc-600')}>
                 <path strokeLinecap="round" strokeLinejoin="round" d={tab.icon} />
@@ -125,7 +129,7 @@ export function MobileNav() {
             </Link>
           )
         })}
-        <button onClick={open} className="flex flex-1 flex-col items-center justify-center gap-1 py-2 text-zinc-600">
+        <button onClick={open} style={{ touchAction: 'manipulation' }} className="flex flex-1 flex-col items-center justify-center gap-1 py-2 text-zinc-600">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="h-5 w-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
