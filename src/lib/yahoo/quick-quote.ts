@@ -7,12 +7,13 @@
 // Concurrency limited to 5 parallel requests to avoid Yahoo rate limiting.
 // 200ms delay between batches as a courtesy.
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const createYahooFinance = require('yahoo-finance2').default
+import createYahooFinance from 'yahoo-finance2'
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _yf: any = null
 function yf(): any {
-  if (!_yf) _yf = new createYahooFinance({ suppressNotices: ['yahooSurvey'] })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!_yf) _yf = new (createYahooFinance as any)({ suppressNotices: ['yahooSurvey'] })
   return _yf
 }
 
