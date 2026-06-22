@@ -381,9 +381,9 @@ export async function POST(request: NextRequest) {
     // Pre-filter via Yahoo (free, no quota) — no FMP calls consumed here
     const quotes = await getQuickQuotes(universeBatch)
     for (const q of quotes) {
-      const peOk = q.pe == null || q.pe <= 20
-      const pbOk = q.pb == null || q.pb <= 2.5
-      const capOk = q.marketCap >= 300_000_000
+      const peOk = q.pe == null || q.pe <= 30
+      const pbOk = q.pb == null || q.pb <= 4
+      const capOk = q.marketCap >= 100_000_000
       if (peOk && pbOk && capOk) screenerTickers.push(q.ticker)
     }
     discoveryResults.push({ action: 'UNIVERSE_FALLBACK', batch: universeBatch.length, passing: screenerTickers.length })
