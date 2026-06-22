@@ -7,16 +7,17 @@
 // API call budget: 1 Yahoo call per ticker (vs 7 FMP calls).
 // Cache: 15-minute in-memory TTL (same as original FMP target).
 
-import YahooFinance from 'yahoo-finance2'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const createYahooFinance = require('yahoo-finance2').default
 import type { StockFundamentals, YearlyValue, BusinessTier } from '@/types'
 import { detectCyclicality, normalizeEps } from '@/lib/graham/intrinsic-value'
 import { classifyBusinessQuality } from '@/lib/graham/business-quality'
 
 // ─── Singleton ─────────────────────────────────────────────────────────────────
 
-let _yf: InstanceType<typeof YahooFinance> | null = null
-function yf(): InstanceType<typeof YahooFinance> {
-  if (!_yf) _yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
+let _yf: any = null
+function yf(): any {
+  if (!_yf) _yf = new createYahooFinance({ suppressNotices: ['yahooSurvey'] })
   return _yf
 }
 
