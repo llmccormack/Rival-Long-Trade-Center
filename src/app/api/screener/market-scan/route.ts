@@ -1,5 +1,6 @@
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { getCompleteFundamentals } from '@/lib/fmp/client'
+import { getYahooFundamentals } from '@/lib/yahoo/fundamentals'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
@@ -28,8 +29,8 @@ export async function GET(req: Request) {
   // Step 2: FMP deep analysis + philosophy scoring
   for (const candidate of toAnalyse) {
     try {
-      const fundamentals = await getCompleteFundamentals(candidate.symbol)
-      fmpCalls++
+      let fundamentals = await getYahooFundamentals(candidate.symbol)
+      if (fundamentals.price <= 0) { fundamentals = await getCompleteFundamentals(candidate.symbol); fmpCalls++ }
 
       const criteria = applyGrahamCriteria(fundamentals)
       const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)

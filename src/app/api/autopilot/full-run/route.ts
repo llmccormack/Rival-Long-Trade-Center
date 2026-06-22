@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { generateRundown } from '@/lib/ai/rundown'
 import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks } from '@/lib/fmp/client'
+import { getYahooFundamentals } from '@/lib/yahoo/fundamentals'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
@@ -205,7 +206,9 @@ export async function POST(request: NextRequest) {
 
   for (const pos of openPositions) {
     try {
-      const f = await getCompleteFundamentals(pos.stock.ticker)
+      // Yahoo first (free, unlimited) → FMP fallback
+      let f = await getYahooFundamentals(pos.stock.ticker)
+      if (f.price <= 0) f = await getCompleteFundamentals(pos.stock.ticker)
       if (f.price <= 0) { sellResults.push({ ticker: pos.stock.ticker, action: 'SKIP', reason: 'No price data' }); continue }
       if (macro?.treasury10yr) {
         f.treasuryYield10yr = macro.treasury10yr
@@ -411,9 +414,11 @@ export async function POST(request: NextRequest) {
     const ticker = item.ticker
     const wl = item.watchlistItem  // present for manual stocks, undefined for screener stocks
     try {
-      const fundamentals = await getCompleteFundamentals(ticker)
+      // Yahoo first (free, no quota) → FMP fallback
+      let fundamentals = await getYahooFundamentals(ticker)
+      if (fundamentals.price <= 0) fundamentals = await getCompleteFundamentals(ticker)
       if (fundamentals.price <= 0) {
-        tradeResults.push({ ticker, action: 'SKIP', reason: 'No price data from FMP' })
+        tradeResults.push({ ticker, action: 'SKIP', reason: 'No price data' })
         continue
       }
       if (macro?.treasury10yr) {
