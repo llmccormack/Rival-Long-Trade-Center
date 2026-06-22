@@ -377,17 +377,14 @@ export async function POST(request: NextRequest) {
   if (screenerTickers.length === 0) {
     screenerSource = 'universe'
     // Take today's rotating batch from the curated value universe (~30 tickers)
-    const universeBatch = getValueUniverseBatch(dailyLimit * 2) // 2× so some survive quickScreen
-    // Quick-screen each: 2 FMP calls/ticker to verify PE≤20 and PB≤2.5
-    const quickResults = await Promise.all(
-      universeBatch.map(t => quickScreen(t).catch(() => null))
-    )
-    for (const r of quickResults) {
-      if (!r) continue
-      const peOk = r.pe == null || r.pe <= 20
-      const pbOk = r.pb == null || r.pb <= 2.5
-      const capOk = r.marketCap >= 300_000_000
-      if (peOk && pbOk && capOk) screenerTickers.push(r.ticker)
+    const universeBatch = getValueUniverseBatch(dailyLimit * 2) // 2× so some survive pre-filter
+    // Pre-filter via Yahoo (free, no quota) — no FMP calls consumed here
+    const quotes = await getQuickQuotes(universeBatch)
+    for (const q of quotes) {
+      const peOk = q.pe == null || q.pe <= 20
+      const pbOk = q.pb == null || q.pb <= 2.5
+      const capOk = q.marketCap >= 300_000_000
+      if (peOk && pbOk && capOk) screenerTickers.push(q.ticker)
     }
     discoveryResults.push({ action: 'UNIVERSE_FALLBACK', batch: universeBatch.length, passing: screenerTickers.length })
   }
