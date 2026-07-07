@@ -33,7 +33,13 @@ export async function POST(request: NextRequest) {
     return Response.json({ message: 'Market closed — autopilot only runs on trading days', ranAt: new Date().toISOString() })
   }
 
-  // isEnabled is informational only — cron always runs regardless
+  // Kill switch — a disabled autopilot that still trades is not a kill switch.
+  if (!config.isEnabled) {
+    return Response.json({
+      message: 'Autopilot is disabled (kill switch). Enable it in Settings to resume runs.',
+      ranAt: new Date().toISOString(),
+    })
+  }
 
   let dailyBuys = 0
   let dailyNotional = 0
@@ -143,15 +149,23 @@ export async function POST(request: NextRequest) {
         ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 45) + 3)
         : effectiveMinScore
 
+      // Bear-case gate: the MOS must survive a zero-growth stress test.
+      // (Undefined bear-case is tolerated in paper mode — the scorer already
+      // dampens for the data gap; the live path in manager.ts requires it.)
+      const bearOk = iv.bearCaseMos === undefined || iv.bearCaseMos >= 0
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
         philosophy.total >= stockMinScore &&
-        iv.marginOfSafety >= effectiveMinMos
+        iv.marginOfSafety >= effectiveMinMos &&
+        bearOk
 
       if (!passed) {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
+          : !bearOk
+          ? `Bear-case MOS ${iv.bearCaseMos!.toFixed(1)}% < 0 — margin of safety evaporates under zero-growth stress`
           : `Score ${philosophy.total} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}`
         results.push({
           ticker: item.stock.ticker,
@@ -165,6 +179,19 @@ export async function POST(request: NextRequest) {
         prisma.watchlistItem.update({
           where: { stockId: item.stockId },
           data: { lastScore: philosophy.total, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
+        }).catch(() => {})
+        // Shadow book: record the pass we didn't take, with price at decision.
+        // Later runs fill in forward returns — this is how thresholds get tuned
+        // with evidence instead of philosophy alone.
+        prisma.shadowDecision.create({
+          data: {
+            ticker: item.stock.ticker,
+            action,
+            reason: skipReason,
+            score: philosophy.total,
+            mos: iv.marginOfSafety,
+            priceAtDecision: fundamentals.price,
+          },
         }).catch(() => {})
         continue
       }
@@ -212,6 +239,9 @@ export async function POST(request: NextRequest) {
           stockSector: fundamentals.sector,
           sectorExposure,
           maxSectorPct,
+          piotroskiFScore: fundamentals.piotroskiFScore,
+          inFreefall: fundamentals.inFreefall,
+          marginTrendDeclining: fundamentals.operatingMarginTrend === 'declining',
         })
 
         if (!allocation.canAllocate) {

@@ -32,6 +32,7 @@ export type Source =
   | 'templeton'
   | 'pabrai'
   | 'dreman'
+  | 'academic'
 
 export type Category =
   | 'margin_of_safety'
@@ -2511,6 +2512,111 @@ export const DREMAN: Principle[] = [
   },
 ]
 
+// ─── Quantitative Quality & Dedicated Check Principles ────────────────────────
+//
+// Two jobs: (1) academic factor evidence (Piotroski, Altman, momentum) that
+// guards the Graham screen against value traps, and (2) dedicated principle IDs
+// for checks that previously reused another principle's ID — reuse double-counted
+// weights and silently skewed the composite score.
+
+export const QUANT_QUALITY: Principle[] = [
+  {
+    id: 'q_piotroski_fscore',
+    source: 'academic',
+    year: 2000,
+    category: 'business_quality',
+    title: 'Piotroski F-Score',
+    rule: 'Within cheap stocks, buy only those whose fundamentals are improving. Nine binary checks across profitability, leverage, and efficiency. F ≤ 2 is a dying business — veto. F ≥ 7 separates recovering value from value traps (+7.5%/yr spread in Piotroski 2000).',
+    weight: 8,
+    appliesTo: ['buy', 'screen'],
+  },
+  {
+    id: 'q_altman_z',
+    source: 'academic',
+    year: 1968,
+    category: 'risk',
+    title: 'Altman Z-Score Bankruptcy Distance',
+    rule: 'Never buy a statistically cheap stock in the bankruptcy distress zone (Z < 1.81, non-financials). Cheapness caused by solvency risk is not a margin of safety — it is the absence of one.',
+    weight: 7,
+    appliesTo: ['buy', 'screen'],
+  },
+  {
+    id: 'q_bear_case_mos',
+    source: 'klarman',
+    category: 'margin_of_safety',
+    title: 'Margin of Safety Must Survive Zero Growth',
+    rule: 'Recompute intrinsic value assuming zero growth forever and a higher discount rate. If the discount to price disappears, the "margin of safety" was a growth forecast, not protection. Only buy when the bear-case MOS is positive.',
+    weight: 9,
+    appliesTo: ['buy'],
+  },
+  {
+    id: 'q_momentum_freefall',
+    source: 'academic',
+    category: 'market_behaviour',
+    title: 'Do Not Catch Falling Knives',
+    rule: 'A stock sitting on its 6-month low with three-month momentum of −15% or worse is in freefall. Cheap can get cheaper; wait for stabilization before initiating. Value plus momentum has dominated value alone in every major factor study.',
+    weight: 5,
+    appliesTo: ['buy'],
+  },
+  {
+    id: 'q_graham_number',
+    source: 'intelligent_investor',
+    chapter: 'Chapter 14',
+    category: 'valuation',
+    title: 'Price Below Graham Number',
+    rule: 'The Graham Number √(22.5 × EPS × BVPS) caps what a defensive investor pays. Price above it means P/E × P/B exceeds 22.5.',
+    weight: 8,
+    appliesTo: ['buy', 'screen'],
+  },
+  {
+    id: 'q_share_count_trend',
+    source: 'buffett_letter',
+    category: 'management',
+    title: 'Share Count Reveals Capital Allocation',
+    rule: 'Shrinking share count at sensible prices compounds per-share value; persistent dilution transfers value from holders to issuers. Judge management by the share count, not the press release.',
+    weight: 7,
+    appliesTo: ['buy', 'hold'],
+  },
+  {
+    id: 'q_insider_activity',
+    source: 'academic',
+    year: 1998,
+    category: 'management',
+    title: 'Insider Open-Market Buying',
+    rule: 'Cluster insider buying predicts 6–12 month outperformance (Seyhun 1998, Lakonishok 2001). Cluster selling with no offsetting buys warrants caution but not a veto.',
+    weight: 6,
+    appliesTo: ['buy'],
+  },
+  {
+    id: 'q_expected_cagr',
+    source: 'buffett_essay',
+    category: 'valuation',
+    title: '10-Year Expected Return Hurdle',
+    rule: 'At today\'s price, what annual return is locked in if EPS grows normally and the exit multiple mean-reverts? Below Buffett\'s ~10% hurdle, equities do not compensate for ownership risk.',
+    weight: 8,
+    appliesTo: ['buy', 'hold'],
+  },
+  {
+    id: 'q_ncav_netnet',
+    source: 'security_analysis',
+    chapter: 'Chapter 26',
+    category: 'margin_of_safety',
+    title: 'Net-Net Working Capital Floor',
+    rule: 'Price below 67% of net current asset value means the market prices the operating business below zero. The most reliable mechanical screen in the academic record — but verify solvency first.',
+    weight: 8,
+    appliesTo: ['buy', 'screen'],
+  },
+  {
+    id: 'q_stock_cape',
+    source: 'academic',
+    category: 'valuation',
+    title: 'Stock-Level Shiller CAPE',
+    rule: 'Value against the 10-year real average of earnings, not a single peak year. High stock-level CAPE predicts low forward returns with statistical reliability.',
+    weight: 7,
+    appliesTo: ['buy', 'screen'],
+  },
+]
+
 // ─── Master export and scoring weights ───────────────────────────────────────
 
 export const ALL_PRINCIPLES: Principle[] = [
@@ -2528,6 +2634,7 @@ export const ALL_PRINCIPLES: Principle[] = [
   ...TEMPLETON,
   ...PABRAI,
   ...DREMAN,
+  ...QUANT_QUALITY,
 ]
 
 export const PRINCIPLES_BY_CATEGORY = ALL_PRINCIPLES.reduce<Record<Category, Principle[]>>(
@@ -2563,6 +2670,7 @@ export const SOURCE_LABELS: Record<Source, string> = {
   templeton: 'Templeton Investment Principles',
   pabrai: 'The Dhandho Investor',
   dreman: 'Contrarian Investment Strategies',
+  academic: 'Quantitative Research (Piotroski, Altman, Seyhun, Shiller)',
 }
 
 export const CATEGORY_LABELS: Record<Category, string> = {

@@ -97,9 +97,9 @@ export function scoreBuyDecision(
     else audit.push(`FAIL: Stock is ${Math.abs(iv.marginOfSafety).toFixed(1)}% above intrinsic value. Mr. Market is being optimistic. Wait. (Intelligent Investor Ch.8)`)
   }
 
-  // Graham Number check
+  // Graham Number check — dedicated principle (was reusing ii_c14_moderate_pb, double-counting its weight)
   if (iv.grahamNumber) {
-    const gPrinciple = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_moderate_pb')!
+    const gPrinciple = ALL_PRINCIPLES.find(p => p.id === 'q_graham_number')!
     const ratio = fundamentals.price / iv.grahamNumber
     const gScore = Math.max(0, 1 - ratio)
     triggered.push({ principle: gPrinciple, score: gScore, note: `Price/Graham Number: ${ratio.toFixed(2)}× (≤1.0 required)` })
@@ -196,6 +196,76 @@ export function scoreBuyDecision(
           `Sloan (1996): high-accruals firms consistently disappoint. Reported profits may be accounting artefacts, not economic reality. ` +
           `Scrutinise receivables, inventory build, and deferred revenue. (Accounting Review 1996)`)
       }
+    }
+  }
+
+  // ── Piotroski F-Score (2000) — value-trap separator ───────────────────────
+  // Within cheap stocks, high-F (improving fundamentals) outperformed low-F
+  // (deteriorating) by ~7.5%/yr in Piotroski's sample. F ≤ 2 is a hard veto:
+  // a cheap business failing nearly every improvement check is dying, not recovering.
+
+  if (fundamentals.piotroskiFScore !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_piotroski_fscore')!
+    const f9 = fundamentals.piotroskiFScore
+    const fMax = fundamentals.piotroskiMax ?? 9
+    const ratio = fMax > 0 ? f9 / fMax : 0
+    const fScore = ratio >= 0.78 ? 1 : ratio >= 0.55 ? 0.7 : ratio >= 0.40 ? 0.4 : 0.1
+    triggered.push({ principle: p, score: fScore, note: `Piotroski F-Score: ${f9}/${fMax} (≥7 = recovering value; ≤2 = value trap)` })
+    if (f9 <= 2 && fMax >= 7) {
+      vetoed.push(p)
+      audit.push(`VETO: Piotroski F-Score ${f9}/${fMax} — fundamentals deteriorating on nearly every dimension. This is what a value trap looks like: cheap AND dying. (Piotroski 2000)`)
+    } else if (ratio >= 0.78) {
+      audit.push(`PASS: Piotroski F-Score ${f9}/${fMax} — cheap AND improving. Piotroski (2000): high-F value stocks outperformed low-F by ~7.5%/yr.`)
+    } else if (ratio < 0.40) {
+      audit.push(`WARN: Piotroski F-Score ${f9}/${fMax} — fundamentals weakening. Demand a wider margin of safety before committing. (Piotroski 2000)`)
+    }
+  }
+
+  // ── Altman Z-Score (1968) — bankruptcy distance, skipped for financials ───
+
+  if (fundamentals.altmanZ !== undefined && !isFinancialSector) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_altman_z')!
+    const z = fundamentals.altmanZ
+    const zScore = z >= 3 ? 1 : z >= 2.6 ? 0.8 : z >= 1.81 ? 0.5 : z >= 1.5 ? 0.2 : 0.05
+    triggered.push({ principle: p, score: zScore, note: `Altman Z: ${z.toFixed(2)} (safe >2.99, grey 1.81–2.99, distress <1.81)` })
+    if (z < 1.5) {
+      vetoed.push(p)
+      audit.push(`VETO: Altman Z of ${z.toFixed(2)} — deep in the bankruptcy distress zone. The "cheapness" is solvency risk being priced. There is no margin of safety in a business that may not survive. (Altman 1968)`)
+    } else if (z < 1.81) {
+      audit.push(`WARN: Altman Z ${z.toFixed(2)} — distress zone. Proceed only with hard asset backing and a wide margin of safety. (Altman 1968)`)
+    } else if (z >= 3) {
+      audit.push(`PASS: Altman Z ${z.toFixed(2)} — safe zone, bankruptcy risk statistically negligible. (Altman 1968)`)
+    }
+  }
+
+  // ── Bear-Case Margin of Safety — the stress test ──────────────────────────
+  // IV recomputed at 0% growth and +2% discount. If the discount to price
+  // disappears under those assumptions, the MOS was a growth forecast, not protection.
+
+  if (iv.bearCaseMos !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_bear_case_mos')!
+    const b = iv.bearCaseMos
+    const bScore = b >= 20 ? 1 : b >= 10 ? 0.8 : b >= 0 ? 0.6 : b >= -10 ? 0.25 : 0.05
+    triggered.push({ principle: p, score: bScore, note: `Bear-case MOS (0% growth, +2% discount): ${b.toFixed(1)}% (must be ≥0 to buy)` })
+    if (b >= 10) {
+      audit.push(`PASS: Margin of safety survives the stress test — ${b.toFixed(1)}% discount remains at ZERO growth and a higher discount rate. The protection is real, not a forecast. (Klarman)`)
+    } else if (b < 0) {
+      audit.push(`WARN: Bear-case MOS is ${b.toFixed(1)}% — the entire margin of safety evaporates without growth. This is a growth bet dressed as a value investment. (Klarman: downside before upside)`)
+    }
+  }
+
+  // ── Momentum — falling-knife protection ───────────────────────────────────
+
+  if (fundamentals.momentum3mo !== undefined) {
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_momentum_freefall')!
+    if (fundamentals.inFreefall) {
+      triggered.push({ principle: p, score: 0, note: `FREEFALL: at 6-mo low with ${(fundamentals.momentum3mo * 100).toFixed(0)}% 3-mo momentum` })
+      audit.push(`WARN: Stock is in freefall — sitting on its 6-month low with ${(fundamentals.momentum3mo * 100).toFixed(0)}% 3-month momentum. Cheap can get cheaper; do not initiate until price stabilizes. (Value + momentum factor literature)`)
+    } else {
+      const m = fundamentals.momentum3mo
+      const mScore = m >= 0 ? 1 : m >= -0.10 ? 0.7 : 0.4
+      triggered.push({ principle: p, score: mScore, note: `3-mo momentum: ${(m * 100).toFixed(1)}% | ${((fundamentals.priceVs6moLowPct ?? 0) * 100).toFixed(0)}% above 6-mo low` })
+      if (m >= 0) audit.push(`PASS: Price has stabilized (${(m * 100).toFixed(1)}% 3-mo momentum) — not catching a falling knife.`)
     }
   }
 
@@ -439,7 +509,7 @@ export function scoreBuyDecision(
   // in the historical academic literature (Oppenheimer 1986, Greenblatt 2006).
 
   if (fundamentals.ncavPerShare !== undefined && fundamentals.ncavPerShare > 0) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_financial_strength')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_ncav_netnet')!
     if (p) {
       const ncavRatio = fundamentals.price / fundamentals.ncavPerShare
       const ncavScore = ncavRatio <= 0.67 ? 1 : ncavRatio <= 1.0 ? 0.7 : ncavRatio <= 1.5 ? 0.4 : 0.1
@@ -461,7 +531,7 @@ export function scoreBuyDecision(
   // Valuation relative to the full earnings cycle is more reliable than trailing P/E.
 
   if (fundamentals.capeRatio !== undefined) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c14_moderate_pe')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_stock_cape')!
     if (p) {
       const capeScore = fundamentals.capeRatio <= 10 ? 1 : fundamentals.capeRatio <= 15 ? 0.85 :
         fundamentals.capeRatio <= 20 ? 0.65 : fundamentals.capeRatio <= 25 ? 0.4 : 0.1
@@ -482,7 +552,7 @@ export function scoreBuyDecision(
   // am I locking in? Buffett's hurdle rate is ~10%. Below 7% = not worth the risk.
 
   if (iv.expectedCagr10yr !== undefined) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'ii_c20_margin_of_safety')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_expected_cagr')!
     if (p) {
       const cagr = iv.expectedCagr10yr
       const cagrScore = cagr >= 0.15 ? 1 : cagr >= 0.12 ? 0.85 : cagr >= 0.10 ? 0.70 :
@@ -507,7 +577,7 @@ export function scoreBuyDecision(
   // Dilution: every share issued at low prices is a permanent transfer from holders to issuers.
 
   if (fundamentals.shareCountCagr5yr !== undefined) {
-    const p = ALL_PRINCIPLES.find(p => p.id === 'bl_1990_moat_identification')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_share_count_trend')!
     if (p) {
       const cagr = fundamentals.shareCountCagr5yr
       const shareScore = cagr <= -0.03 ? 1 : cagr <= -0.01 ? 0.85 : cagr <= 0.01 ? 0.65 :
@@ -572,7 +642,7 @@ export function scoreBuyDecision(
     const recentSells = recent.filter(t => t.transactionType?.startsWith('S'))
     const distinctBuyers = new Set(recentBuys.map(t => t.reportingName)).size
 
-    const p = ALL_PRINCIPLES.find(p => p.id === 'bl_1990_moat_identification')!
+    const p = ALL_PRINCIPLES.find(p => p.id === 'q_insider_activity')!
     if (p) {
       if (recentBuys.length >= 2 || distinctBuyers >= 2) {
         // Multiple insiders buying — very strong signal
@@ -657,8 +727,47 @@ export function scoreBuyDecision(
     }
   }
 
-  const weightedTotal = triggered.reduce((sum, t) => sum + t.score * t.principle.weight, 0)
-  const maxTotal = triggered.reduce((sum, t) => sum + t.principle.weight, 0)
+  // ── Data-Coverage Dampener ─────────────────────────────────────────────────
+  // FIXED BUG: the composite used to be a weighted average over TRIGGERED checks
+  // only, so missing data (no PEG, no insider filings, no cash-flow statement)
+  // REMOVED checks from the denominator and could raise the score. A data-poor
+  // microcap could outscore a fully-analyzed blue chip.
+  // Fix: core checks that could not run enter the composite at a below-neutral
+  // 0.35 — what cannot be verified cannot support conviction.
+  const CORE_CHECK_IDS: string[] = [
+    'ii_c20_margin_of_safety',           // margin of safety (needs an intrinsic value)
+    'q_bear_case_mos',                   // stress-tested MOS
+    'ii_c14_moderate_pe',                // P/E
+    'bl_2007_financial_leverage_danger', // debt/equity
+    'bl_1990_moat_identification',       // ROE
+    'bl_2017_moat_widening',             // ROIC
+    'ii_c12_eps_skepticism',             // FCF vs net income quality
+    'ii_accruals_sloan',                 // accruals ratio
+    'ii_c14_earnings_growth',            // EPS growth
+    'q_piotroski_fscore',                // F-Score
+    'q_momentum_freefall',               // momentum
+    ...(!isFinancialSector ? ['ii_c14_financial_strength', 'q_altman_z'] : []),
+  ]
+  const triggeredIds = new Set(triggered.map(t => t.principle.id))
+  const missingCore: Principle[] = CORE_CHECK_IDS
+    .filter(id => !triggeredIds.has(id))
+    .map(id => ALL_PRINCIPLES.find(p => p.id === id))
+    .filter((p): p is Principle => !!p)
+
+  const MISSING_DATA_SCORE = 0.35
+  if (missingCore.length > 0) {
+    audit.push(
+      `DATA GAPS: ${missingCore.length} core check(s) could not run — ${missingCore.map(p => p.title).join('; ')}. ` +
+      `Composite dampened accordingly: what cannot be verified cannot support conviction. (Graham Ch.1: analysis must be thorough)`
+    )
+  }
+
+  const weightedTotal =
+    triggered.reduce((sum, t) => sum + t.score * t.principle.weight, 0) +
+    missingCore.reduce((sum, p) => sum + MISSING_DATA_SCORE * p.weight, 0)
+  const maxTotal =
+    triggered.reduce((sum, t) => sum + t.principle.weight, 0) +
+    missingCore.reduce((sum, p) => sum + p.weight, 0)
   const score = maxTotal > 0 ? (weightedTotal / maxTotal) * 100 : 0
 
   const conviction = scoreToConviction(score, iv.marginOfSafety, criteria.overallPass, fundamentals.businessTier)

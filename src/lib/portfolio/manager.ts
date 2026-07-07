@@ -91,6 +91,26 @@ export async function executeAutomatedBuy(
   ticker: string,
   accountId: string
 ): Promise<AutoBuyResult> {
+  // ── Kill switch — LIVE orders must respect the user's disable toggle ──────
+  const config = await prisma.autopilotConfig.findUnique({ where: { id: 'singleton' } }).catch(() => null)
+  if (config && !config.isEnabled) {
+    return { success: false, reason: 'Autopilot is disabled (kill switch). No live orders will be placed until it is re-enabled in Settings.' }
+  }
+
+  // ── Daily risk caps — previously only enforced on the paper path ──────────
+  const startOfDay = new Date()
+  startOfDay.setHours(0, 0, 0, 0)
+  const todayIntents = await prisma.orderIntent.findMany({
+    where: { createdAt: { gte: startOfDay }, status: { in: ['PENDING', 'PLACED'] } },
+  }).catch(() => [])
+  const maxDailyTrades = config?.maxDailyTrades ?? 10
+  const maxDailyNotional = config?.maxDailyNotional ?? 5000
+  const maxSingleNotional = config?.maxSingleNotional ?? 2000
+  if (todayIntents.length >= maxDailyTrades) {
+    return { success: false, reason: `Daily live trade limit reached (${todayIntents.length}/${maxDailyTrades}). Resets at midnight.` }
+  }
+  const todayNotional = todayIntents.reduce((s, i) => s + i.notional, 0)
+
   const fundamentals = await getCompleteFundamentals(ticker)
   const criteria = applyGrahamCriteria(fundamentals)
   const iv = calculateIntrinsicValue(fundamentals, fundamentals.sharesOutstanding)
@@ -133,6 +153,21 @@ export async function executeAutomatedBuy(
     }
   }
 
+  // Bear-case MOS gate — for real money the margin of safety must survive
+  // a zero-growth stress test. If it only exists under growth assumptions,
+  // it is a forecast, not protection.
+  if (iv.bearCaseMos === undefined || iv.bearCaseMos < 0) {
+    return {
+      success: false,
+      reason: iv.bearCaseMos === undefined
+        ? 'Bear-case intrinsic value could not be computed — insufficient data to stress-test the margin of safety. No live order without it.'
+        : `Bear-case MOS is ${iv.bearCaseMos.toFixed(1)}% — the margin of safety evaporates at zero growth. This is a growth bet, not a value entry. (Klarman)`,
+      philosophyScore: philosophy.total,
+      conviction: philosophy.conviction,
+      auditTrail: philosophy.auditTrail,
+    }
+  }
+
   // Scale position size by conviction — higher score = larger initial position
   const account = await getAccount(accountId)
   const convictionMultiplier = philosophy.conviction === 'strong_buy' ? 1.0
@@ -143,6 +178,18 @@ export async function executeAutomatedBuy(
   const existing = await prisma.portfolioItem.findFirst({
     where: { stock: { ticker: ticker.toUpperCase() } },
   })
+
+  // Falling-knife gate — never INITIATE a live position in freefall
+  if (fundamentals.inFreefall && !existing) {
+    return {
+      success: false,
+      reason: `Falling knife — ${ticker.toUpperCase()} is at its 6-month low with ${((fundamentals.momentum3mo ?? 0) * 100).toFixed(0)}% 3-month momentum. Waiting for stabilization before initiating.`,
+      philosophyScore: philosophy.total,
+      conviction: philosophy.conviction,
+      auditTrail: philosophy.auditTrail,
+    }
+  }
+
   const existingValue = existing ? existing.shares * fundamentals.price : 0
   const remainingAllocation = Math.max(0, maxPositionValue - existingValue)
 
@@ -156,17 +203,64 @@ export async function executeAutomatedBuy(
     }
   }
 
-  const sharesToBuy = Math.floor(remainingAllocation / fundamentals.price)
+  // Clamp by single-trade and remaining daily notional caps
+  const notionalRoom = Math.min(remainingAllocation, maxSingleNotional, Math.max(0, maxDailyNotional - todayNotional))
+  const sharesToBuy = Math.floor(notionalRoom / fundamentals.price)
   if (sharesToBuy < 1) {
-    return { success: false, reason: 'Insufficient capital', auditTrail: philosophy.auditTrail }
+    return {
+      success: false,
+      reason: notionalRoom < remainingAllocation
+        ? `Daily/single-trade notional caps leave $${notionalRoom.toFixed(0)} of room — below one share ($${fundamentals.price.toFixed(2)}).`
+        : 'Insufficient capital',
+      auditTrail: philosophy.auditTrail,
+    }
   }
 
-  const { orderId } = await placeOrder({
-    ticker,
-    shares: sharesToBuy,
-    orderType: 'MARKET',
-    accountId,
+  // ── Intent-first order placement ───────────────────────────────────────────
+  // The intent row is written BEFORE the order so a crash between "order placed"
+  // and "portfolio updated" leaves a visible PLACED intent instead of an
+  // untracked live position. Marketable LIMIT (+1%) instead of MARKET: this
+  // strategy hunts illiquid value names where market orders donate the spread.
+  const limitPrice = Math.round(fundamentals.price * 1.01 * 100) / 100
+  const intent = await prisma.orderIntent.create({
+    data: {
+      ticker: ticker.toUpperCase(),
+      side: 'BUY',
+      shares: sharesToBuy,
+      estPrice: fundamentals.price,
+      notional: sharesToBuy * limitPrice,
+      accountId,
+    },
   })
+
+  let orderId: string
+  try {
+    ;({ orderId } = await placeOrder({
+      ticker,
+      shares: sharesToBuy,
+      orderType: 'LIMIT',
+      limitPrice,
+      accountId,
+    }))
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await prisma.orderIntent.update({
+      where: { id: intent.id },
+      data: { status: 'FAILED', error: msg },
+    }).catch(() => {})
+    return {
+      success: false,
+      reason: `Order placement failed: ${msg}`,
+      philosophyScore: philosophy.total,
+      conviction: philosophy.conviction,
+      auditTrail: philosophy.auditTrail,
+    }
+  }
+
+  await prisma.orderIntent.update({
+    where: { id: intent.id },
+    data: { status: 'PLACED', schwabOrderId: orderId },
+  }).catch(() => {})
 
   const stock = await prisma.stock.upsert({
     where: { ticker: ticker.toUpperCase() },

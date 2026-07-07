@@ -8,17 +8,23 @@
 // is covered in ~10 days. Each ticker is then quick-screened (2 FMP calls)
 // before deep analysis (7 FMP calls), so only the cheap ones use quota.
 
+// PRUNED (delisted/acquired — each dead ticker burned FMP quota daily and
+// returned garbage): ANTM→ELV rename, PXD→XOM, DISH→SATS, STOR (private),
+// RAD (bankrupt), BIG (bankrupt), WBA (private 2025), MDC (acquired), JNPR→HPE,
+// ADS→BFH rename, PACW→BANC merger, SFG (acquired), IAA (acquired), HSC→NVRI
+// rename, ROME/VCNX/GPAK (invalid or non-value microcaps).
 export const VALUE_UNIVERSE: string[] = [
   // Financials / Banks
   'JPM','BAC','WFC','C','USB','TFC','PNC','SCHW','MS','GS','BK','STT',
   'MTB','RF','CFG','HBAN','KEY','FITB','ZION','FHN','WAL','EWBC',
   // Insurance
   'BRK.B','AFL','MET','PRU','AIG','ALL','HIG','L','CB','TRV','PGR',
+  'MKL','ACGL','AFG','GL','RGA','EG',
   // Healthcare
   'JNJ','ABBV','MRK','PFE','BMY','AMGN','GILD','CVS','CI','HUM','MOH',
-  'UNH','ELV','CNC','HCA','THC','UHS','ANTM',
+  'UNH','ELV','CNC','HCA','THC','UHS',
   // Energy
-  'XOM','CVX','COP','EOG','PSX','VLO','MPC','OXY','DVN','PXD','FANG',
+  'XOM','CVX','COP','EOG','PSX','VLO','MPC','OXY','DVN','FANG',
   'HAL','SLB','BKR','NOV',
   // Materials / Industrials
   'MMM','GE','HON','RTX','LMT','NOC','GD','BA','CAT','DE','EMR','ETN',
@@ -29,33 +35,32 @@ export const VALUE_UNIVERSE: string[] = [
   // Consumer Discretionary (value names)
   'GM','F','STLA','LKQ','AN','LAD','KMX','AZO','ORLY','PAG',
   // Technology (value zone)
-  'CSCO','IBM','HPQ','HPE','INTC','MU','STX','WDC','JNPR','NTAP','LRCX',
-  'KLAC','TXN','QCOM','MSI','CDW','LDOS','SAIC','CACI','EPAM',
+  'CSCO','IBM','HPQ','HPE','INTC','MU','STX','WDC','NTAP','LRCX',
+  'KLAC','TXN','QCOM','MSI','CDW','LDOS','SAIC','CACI','EPAM','SWKS','QRVO',
   // Utilities
   'NEE','SO','DUK','AEP','D','EXC','SRE','XEL','WEC','ES','PPL','FE',
   'NI','CNP','OGE','PNW',
   // REITs
-  'O','VICI','MPW','WPC','NNN','STOR','ADC','EPRT','IIPR','STAG',
+  'O','VICI','MPW','WPC','NNN','ADC','EPRT','IIPR','STAG',
   // Telecom
-  'VZ','T','TMUS','LUMN','CMCSA','CHTR','DISH',
+  'VZ','T','TMUS','LUMN','CMCSA','CHTR','SATS',
   // Small/mid cap value
   'GOOG','META','AMZN', // large but value-zone on earnings basis
-  'WBA','CVS','RAD',
-  'BIG','M','JWN','KSS','BBY',
-  'MHO','MDC','TPH','LGIH','GRBK','SKY',
+  'M','JWN','KSS','BBY',
+  'MHO','TPH','LGIH','GRBK','SKY','DHI','LEN','PHM','TOL',
   'NUE','STLD','CMC','RS','WOR','ZEUS',
   'MATX','SAIA','ODFL','XPO','JBHT','CHRW',
-  'ORI','RLI','KMPR','CINF','SFG','ERIE',
+  'ORI','RLI','KMPR','CINF','ERIE',
   'AVA','POR','MGEE','SJW','MSEX','CWCO',
-  'BEN','IVZ','AMG','VRTS','ROME','VCNX',
-  'DFS','COF','SYF','AXP','ADS','CACC',
-  'SNV','CMA','BOKF','FFIN','CBSH','PACW',
+  'BEN','IVZ','AMG','VRTS',
+  'DFS','COF','SYF','AXP','BFH','CACC',
+  'SNV','CMA','BOKF','FFIN','CBSH','BANC',
   'OLN','ALB','FMC','CE','EMN','HUN','TROX',
-  'PKG','IP','SEE','SLVM','BERY','GPAK',
-  'WTRG','AWR','SJW','ARTNA','YORW',
-  'MOS','CF','NTR','FMC','ICL',
+  'PKG','IP','SEE','SLVM','BERY','GPK',
+  'WTRG','AWR','ARTNA','YORW',
+  'MOS','CF','NTR','ICL',
   'ADNT','LEA','BWA','DAN','VC','APTV',
-  'R','URI','HSC','KAR','CPRT','IAA',
+  'R','URI','KAR','CPRT','NVRI',
 ].filter((v, i, a) => a.indexOf(v) === i) // deduplicate
 
 // Daily rotation: pick a batch of N tickers starting at today's offset.

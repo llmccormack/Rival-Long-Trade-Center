@@ -299,3 +299,48 @@ model PortfolioSnapshot {
 
   @@index([date])
 }
+
+// ─── Shadow Book ─────────────────────────────────────────────────────────────
+// Every SKIP/VETO decision the autopilot makes, with price at decision time.
+// Forward returns get filled in by later runs. This answers the question the
+// system previously couldn't: do our vetoes and thresholds ADD value, or are
+// they filtering out winners? Tune thresholds with evidence, not vibes.
+model ShadowDecision {
+  id              String   @id @default(cuid())
+  ticker          String
+  action          String   // 'SKIP' | 'VETOED'
+  reason          String
+  score           Int?
+  mos             Float?
+  priceAtDecision Float
+  price90d        Float?   // filled ~90 days later
+  return90d       Float?   // (price90d - priceAtDecision) / priceAtDecision
+  decidedAt       DateTime @default(now())
+
+  @@index([ticker])
+  @@index([decidedAt])
+  @@index([action])
+}
+
+// ─── Order Intent ────────────────────────────────────────────────────────────
+// Written BEFORE any live Schwab order is placed (intent-first state machine).
+// Fixes two real money-losers: (1) order placed but DB write failed = untracked
+// position; (2) cron retry = double buy. Also enforces daily trade/notional caps
+// on the LIVE path, which previously only existed for paper trading.
+model OrderIntent {
+  id            String   @id @default(cuid())
+  ticker        String
+  side          String   @default("BUY")
+  shares        Float
+  estPrice      Float
+  notional      Float
+  status        String   @default("PENDING") // PENDING | PLACED | FAILED
+  schwabOrderId String?
+  accountId     String?
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+}

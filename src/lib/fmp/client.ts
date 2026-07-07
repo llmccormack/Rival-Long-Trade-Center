@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from 'axios'
 import type { StockFundamentals, YearlyValue } from '@/types'
 import { detectCyclicality, normalizeEps } from '@/lib/graham/intrinsic-value'
 import { classifyBusinessQuality } from '@/lib/graham/business-quality'
+import { computePiotroskiFScore, computeAltmanZ } from '@/lib/graham/quality-scores'
 
 const BASE_URL = 'https://financialmodelingprep.com/api/v3'
 
@@ -406,7 +407,10 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
   const cached = cache.get<StockFundamentals>(cacheKey)
   if (cached) return cached
 
-  const [profile, incomeStmts, balanceSheets, cashFlows, keyMetrics, dividends, quote] =
+  const momentumFrom = new Date(Date.now() - 300 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const momentumTo = new Date().toISOString().slice(0, 10)
+
+  const [profile, incomeStmts, balanceSheets, cashFlows, keyMetrics, dividends, quote, priceHistory] =
     await Promise.all([
       getProfile(ticker),
       getIncomeStatements(ticker, 10),
@@ -415,6 +419,7 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
       getKeyMetrics(ticker, 10),
       getDividendHistory(ticker),
       getQuote(ticker),
+      getHistoricalPrices(ticker, momentumFrom, momentumTo).catch(() => [] as DailyPrice[]),
     ])
 
   const latest = {
@@ -557,6 +562,32 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
       ? ownerEarnings / shares / price
       : undefined
 
+  // ── Quantitative quality scores (Piotroski / Altman) ──────────────────────
+  const piotroski = computePiotroskiFScore(incomeStmts, balanceSheets, cashFlows)
+  const altmanZ = computeAltmanZ({
+    income: latest.income,
+    balance: latest.balance,
+    marketCap: profile?.mktCap ?? quote?.marketCap,
+  })
+
+  // ── Momentum / falling-knife detection ─────────────────────────────────────
+  // priceHistory is chronological (oldest → newest). ~126 trading days = 6 months,
+  // ~63 = 3 months. Freefall = sitting on the 6-month low with ≤−15% 3-mo momentum.
+  let momentum3mo: number | undefined
+  let priceVs6moLowPct: number | undefined
+  let inFreefall: boolean | undefined
+  if (priceHistory.length >= 70 && price > 0) {
+    const closes = priceHistory.map((p) => p.close).filter((c) => c > 0)
+    const last126 = closes.slice(-126)
+    const low6mo = Math.min(...last126)
+    const close63ago = closes[closes.length - 64] ?? closes[0]
+    if (close63ago > 0) momentum3mo = price / close63ago - 1
+    if (low6mo > 0) priceVs6moLowPct = (price - low6mo) / low6mo
+    inFreefall =
+      momentum3mo !== undefined && priceVs6moLowPct !== undefined &&
+      momentum3mo <= -0.15 && priceVs6moLowPct <= 0.02
+  }
+
   const dividendYears = new Set(dividends.map((d) => new Date(d.date).getFullYear())).size
 
   const dividendHistory: YearlyValue[] = dividends
@@ -634,6 +665,12 @@ export async function getCompleteFundamentals(ticker: string): Promise<StockFund
     shareCountCagr5yr,
     isDiluting,
     ownerEarningsYield,
+    piotroskiFScore: piotroski?.score,
+    piotroskiMax: piotroski?.max,
+    altmanZ,
+    momentum3mo,
+    priceVs6moLowPct,
+    inFreefall,
   }
 
   result.businessTier = classifyBusinessQuality(result).tier

@@ -193,6 +193,7 @@ export function calculateIntrinsicValue(
 
   const ownerEarnings = fundamentals.ownerEarnings
   let growthRate = 0.05
+  let bearDcfValue: number | undefined
 
   if (ownerEarnings && ownerEarnings > 0 && sharesOutstanding && sharesOutstanding > 0) {
     const ownerEarningsPerShare = ownerEarnings / sharesOutstanding
@@ -205,6 +206,14 @@ export function calculateIntrinsicValue(
       growthRate,
       discountRate: effectiveDiscountRate,
     })
+
+    // Bear case: zero growth forever, discount rate +2%. A margin of safety
+    // that survives this is real; one that doesn't is a growth forecast in disguise.
+    bearDcfValue = calculateDCF({
+      ownerEarnings: ownerEarningsPerShare,
+      growthRate: 0,
+      discountRate: Math.min(0.20, effectiveDiscountRate + 0.02),
+    }).dcfValue
   }
 
   // Composite weighting — sector-aware
@@ -228,6 +237,20 @@ export function calculateIntrinsicValue(
 
   const marginOfSafety =
     intrinsicValue > 0 ? ((intrinsicValue - price) / intrinsicValue) * 100 : 0
+
+  // ─── Bear-case IV — same composite weights, conservative inputs ───────────────
+  let bearCaseIV: number | undefined
+  if (grahamNumber && bearDcfValue !== undefined) {
+    const bearDcfWeight = isCapitalLight(fundamentals.sector) ? 0.80 : 0.60
+    bearCaseIV = grahamNumber * (1 - bearDcfWeight) + bearDcfValue * bearDcfWeight
+  } else if (bearDcfValue !== undefined) {
+    bearCaseIV = bearDcfValue
+  } else if (grahamNumber) {
+    // Graham Number embeds no growth assumption — it IS the conservative anchor
+    bearCaseIV = grahamNumber
+  }
+  const bearCaseMos =
+    bearCaseIV && bearCaseIV > 0 ? ((bearCaseIV - price) / bearCaseIV) * 100 : undefined
 
   // ─── Buffett's 10-year expected CAGR ──────────────────────────────────────────
   // "I don't look to jump over 7-foot bars; I look around for 1-foot bars that
@@ -272,5 +295,7 @@ export function calculateIntrinsicValue(
     terminalGrowth: dcfResult?.terminalGrowth,
     expectedCagr10yr,
     shillerCapePriceTarget,
+    bearCaseIV,
+    bearCaseMos,
   }
 }

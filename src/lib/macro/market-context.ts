@@ -9,13 +9,18 @@
 // This module makes that behavior explicit and automatic.
 //
 // Data sources (public, no API key required):
-//   CAPE:    https://fred.stlouisfed.org/graph/fredgraph.csv?id=CAPE
+//   CAPE:    https://www.multpl.com/shiller-pe (republishes Shiller's Yale dataset monthly)
 //   10Y UST: https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10
+//
+// NOTE: FRED does NOT carry a Shiller CAPE series. The original id=CAPE fetch
+// returned an HTML error page and silently failed — the macro overlay never
+// engaged. multpl is now primary, with sanity bounds and explicit source tracking.
 
 import axios from 'axios'
 
 export interface MacroContext {
   sp500Cape: number
+  capeSource: 'multpl' | 'cache' | 'fallback'  // 'fallback' = live fetch failed, using hardcoded estimate
   treasury10yr: number            // decimal (0.045 = 4.5%)
   marketTemperature: 'cold' | 'fair' | 'warm' | 'hot' | 'extreme'
   // Adjustments applied on top of user config when market is expensive/cheap
@@ -45,6 +50,26 @@ async function fetchFredLatest(seriesId: string): Promise<number | null> {
     for (let i = lines.length - 1; i >= 1; i--) {
       const [, raw] = lines[i].split(',')
       if (raw && raw.trim() !== '.') return parseFloat(raw.trim())
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// ─── multpl.com Shiller PE scraper ────────────────────────────────────────────
+
+async function fetchMultplCape(): Promise<number | null> {
+  try {
+    const res = await axios.get<string>(
+      'https://www.multpl.com/shiller-pe/table/by-month',
+      { timeout: 8000, responseType: 'text', headers: { 'User-Agent': 'Mozilla/5.0 (GrahamCapital autopilot)' } }
+    )
+    // First right-aligned cell in the monthly table is the latest value
+    const m = res.data.match(/<td class="right">\s*([\d.]+)/)
+    if (m) {
+      const v = parseFloat(m[1])
+      if (v > 3 && v < 100) return v  // sanity bounds — CAPE has never left this range
     }
     return null
   } catch {
@@ -91,8 +116,8 @@ function deriveScoreAdj(cape: number): number {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-// Sensible fallback when FRED is unavailable — current market conditions (2025-2026)
-// CAPE ~34 (expensive), 10Y Treasury ~4.3%. Update periodically if market changes significantly.
+// Last-resort fallback when both live fetch and cache are unavailable.
+// Deliberately conservative (expensive market → autopilot gets pickier, not looser).
 const FALLBACK_CAPE = 34
 const FALLBACK_TREASURY_PCT = 4.3
 
@@ -100,12 +125,16 @@ export async function getMarketContext(): Promise<MacroContext> {
   if (_cached && Date.now() < _expiry) return _cached
 
   const [cape, treasury10yrPct] = await Promise.all([
-    // FRED CAPE series — try both known IDs
-    fetchFredLatest('CAPE').then(v => v ?? fetchFredLatest('SP500PE')),
+    fetchMultplCape(),
     fetchFredLatest('DGS10'),
   ])
 
-  // Use fetched values, fall back to known-good estimates if FRED is unavailable
+  const capeSource: MacroContext['capeSource'] =
+    cape != null ? 'multpl' : _cached ? 'cache' : 'fallback'
+  if (cape == null) {
+    console.warn(`[macro] Shiller CAPE fetch failed — using ${capeSource} value. Macro overlay accuracy degraded.`)
+  }
+
   const resolvedCape = cape ?? (_cached?.sp500Cape ?? FALLBACK_CAPE)
   const resolvedTreasuryPct = treasury10yrPct ?? (_cached ? _cached.treasury10yr * 100 : FALLBACK_TREASURY_PCT)
 
@@ -115,6 +144,7 @@ export async function getMarketContext(): Promise<MacroContext> {
 
   _cached = {
     sp500Cape: resolvedCape,
+    capeSource,
     treasury10yr,
     marketTemperature: deriveTemperature(resolvedCape),
     cashReserveAdj: deriveCashAdj(resolvedCape),
@@ -137,7 +167,7 @@ export function formatMarketContext(ctx: MacroContext): string {
   }[ctx.marketTemperature]
 
   return [
-    `S&P 500 CAPE: ${ctx.sp500Cape.toFixed(1)} | Market: ${tempLabel}`,
+    `S&P 500 CAPE: ${ctx.sp500Cape.toFixed(1)}${ctx.capeSource !== 'multpl' ? ` (⚠ ${ctx.capeSource} value — live fetch failed)` : ''} | Market: ${tempLabel}`,
     `10Y Treasury: ${(ctx.treasury10yr * 100).toFixed(2)}% | Equity earnings yield: ${(1 / ctx.sp500Cape * 100).toFixed(2)}%`,
     `Excess earnings yield (vs bonds): ${(ctx.excessEarningsYield * 100).toFixed(2)}%`,
     `Autopilot adjustments: cash reserve +${ctx.cashReserveAdj}% | min score +${ctx.minScoreAdj}pts`,

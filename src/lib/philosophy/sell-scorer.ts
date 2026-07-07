@@ -1,7 +1,9 @@
 import type { StockFundamentals } from '@/types'
 import type { NewsAnalysis } from '@/lib/fmp/client'
 import type { IntrinsicValueResult } from '@/types'
-import { classifyBusinessQuality } from '@/lib/graham/business-quality'
+// Relative import (not @/ alias) so the backtest harness can run this module
+// under tsx without Next's path resolution.
+import { classifyBusinessQuality } from '../graham/business-quality'
 
 export interface SellSignal {
   shouldSell: boolean

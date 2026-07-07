@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { generateRundown } from '@/lib/ai/rundown'
-import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks, getQuote } from '@/lib/fmp/client'
 import { getYahooFundamentals } from '@/lib/yahoo/fundamentals'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
@@ -46,6 +46,44 @@ export async function POST(request: NextRequest) {
   if (isCronRequest && !isMarketDay()) {
     return Response.json({ message: 'Market closed — autopilot only runs on trading days', ranAt: new Date().toISOString() })
   }
+
+  // Kill switch — a disabled autopilot that still trades is not a kill switch.
+  if (!config.isEnabled) {
+    return Response.json({
+      message: 'Autopilot is disabled (kill switch). Enable it in Settings to resume runs.',
+      ranAt: new Date().toISOString(),
+    })
+  }
+
+  // ── Shadow book maintenance: fill 90-day forward returns ──────────────────
+  // For decisions ~90+ days old with no forward return yet, fetch today's quote
+  // and record what the pass actually cost (or saved). Budget: 15 quotes/run.
+  try {
+    const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    const pending = await prisma.shadowDecision.findMany({
+      where: { return90d: null, decidedAt: { lte: cutoff90 } },
+      orderBy: { decidedAt: 'asc' },
+      take: 15,
+    })
+    for (const sd of pending) {
+      const q = await getQuote(sd.ticker).catch(() => null)
+      if (q?.price && q.price > 0 && sd.priceAtDecision > 0) {
+        await prisma.shadowDecision.update({
+          where: { id: sd.id },
+          data: {
+            price90d: q.price,
+            return90d: (q.price - sd.priceAtDecision) / sd.priceAtDecision,
+          },
+        }).catch(() => {})
+      } else {
+        // Ticker gone (delisted/acquired) — mark so we stop retrying
+        await prisma.shadowDecision.update({
+          where: { id: sd.id },
+          data: { price90d: 0, return90d: 0 },
+        }).catch(() => {})
+      }
+    }
+  } catch { /* shadow maintenance must never abort the run */ }
 
   let dailyBuys = 0
   let dailyNotional = 0
@@ -560,20 +598,37 @@ export async function POST(request: NextRequest) {
         else                              { dynamicMinScore = Math.min(65, baseScore + 15); dynamicMinMos = Math.min(30, baseMos + 15) }
       }
 
+      // Bear-case gate: the MOS must survive a zero-growth stress test
+      const bearOk = iv.bearCaseMos === undefined || iv.bearCaseMos >= 0
+
       const passed =
         philosophy.vetoedBy.length === 0 &&
         combinedScore >= dynamicMinScore &&
-        iv.marginOfSafety >= dynamicMinMos
+        iv.marginOfSafety >= dynamicMinMos &&
+        bearOk
 
       if (!passed) {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
+          : !bearOk
+          ? `Bear-case MOS ${iv.bearCaseMos!.toFixed(1)}% < 0 — margin of safety evaporates under zero-growth stress`
           : `Score ${combinedScore} / MOS ${iv.marginOfSafety.toFixed(1)}% below thresholds${isDeepValue ? ' (deep-value dampening applied)' : ''}${moatData ? ` | Moat ${moatData.moatScore}/10` : ''}`
         tradeResults.push({ ticker, action, score: combinedScore, mos: iv.marginOfSafety, grahamNumber: iv.grahamNumber, dcfValue: iv.dcfValue, reason: skipReason, moatScore: moatData?.moatScore, thesis: moatData?.thesis })
         if (wl) prisma.watchlistItem.update({
           where: { stockId: wl.stockId },
           data: { lastScore: combinedScore, lastMos: iv.marginOfSafety, lastAction: action, lastSkipReason: skipReason, lastAnalyzedAt: new Date() },
+        }).catch(() => {})
+        // Shadow book: record the pass we didn't take for counterfactual tracking
+        prisma.shadowDecision.create({
+          data: {
+            ticker,
+            action,
+            reason: skipReason,
+            score: combinedScore,
+            mos: iv.marginOfSafety,
+            priceAtDecision: fundamentals.price,
+          },
         }).catch(() => {})
         continue
       }
@@ -614,6 +669,9 @@ export async function POST(request: NextRequest) {
           stockSector: fundamentals.sector,
           sectorExposure,
           maxSectorPct,
+          piotroskiFScore: fundamentals.piotroskiFScore,
+          inFreefall: fundamentals.inFreefall,
+          marginTrendDeclining: fundamentals.operatingMarginTrend === 'declining',
         })
 
         if (!allocation.canAllocate) {

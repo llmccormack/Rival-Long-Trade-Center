@@ -76,6 +76,16 @@ export interface StockFundamentals {
   treasuryYield10yr?: number         // injected from macro context (decimal, e.g. 0.045)
   ownerEarningsSpread?: number       // ownerEarningsYield − treasuryYield10yr
 
+  // Quantitative quality scores (Piotroski 2000, Altman 1968)
+  piotroskiFScore?: number           // 0–9: fundamental-improvement checks passed
+  piotroskiMax?: number              // how many of the 9 components were computable
+  altmanZ?: number                   // bankruptcy distance: <1.81 distress, >2.99 safe (non-financials)
+
+  // Price momentum (value-trap / falling-knife protection)
+  momentum3mo?: number               // 3-month price change (decimal, -0.15 = down 15%)
+  priceVs6moLowPct?: number          // how far price sits above its 6-month low (decimal)
+  inFreefall?: boolean               // at 6-month low AND 3-mo momentum ≤ −15% — do not initiate
+
   // Dividends
   dividendPerShare?: number
   dividendYield?: number
@@ -134,6 +144,10 @@ export interface IntrinsicValueResult {
   // Shiller / forward-looking
   expectedCagr10yr?: number          // Buffett's question: what return am I locking in?
   shillerCapePriceTarget?: number    // fair value at Shiller's 20× long-run CAPE
+  // Stress test: IV recomputed at 0% growth and +2% discount rate.
+  // If the bear-case MOS is negative, the entire margin of safety is a growth bet.
+  bearCaseIV?: number
+  bearCaseMos?: number               // percent, like marginOfSafety
 }
 
 export interface ScreenedStock {

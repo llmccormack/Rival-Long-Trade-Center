@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 const SOURCES: Source[] = [
   'intelligent_investor', 'security_analysis', 'buffett_letter', 'buffett_essay', 'phil_fisher',
   'greenblatt', 'munger', 'peter_lynch', 'klarman', 'howard_marks',
-  'walter_schloss', 'templeton', 'pabrai', 'dreman',
+  'walter_schloss', 'templeton', 'pabrai', 'dreman', 'academic',
 ]
 const CATEGORIES: Category[] = [
   'margin_of_safety', 'valuation', 'earnings_power', 'balance_sheet',
@@ -38,6 +38,7 @@ const SOURCE_COLORS: Record<Source, string> = {
   templeton:            'border-yellow-800 bg-yellow-900/20 text-yellow-400',
   pabrai:               'border-pink-800 bg-pink-900/20 text-pink-400',
   dreman:               'border-indigo-800 bg-indigo-900/20 text-indigo-400',
+  academic:             'border-slate-600 bg-slate-800/40 text-slate-300',
 }
 
 const CATEGORY_COLORS: Record<Category, string> = {

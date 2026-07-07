@@ -34,6 +34,10 @@ export interface AllocationInput {
   stockSector?: string
   sectorExposure?: Record<string, number>  // sector → total $ currently held
   maxSectorPct?: number          // max % of capital in any one sector (default 30)
+  // Falling-knife / thesis-health guards
+  piotroskiFScore?: number       // averaging-down boost requires F ≥ 5 (thesis intact)
+  inFreefall?: boolean           // at 6-mo low with ≤−15% 3-mo momentum — block NEW positions
+  marginTrendDeclining?: boolean // Fisher Point 5 violation — no averaging-down boost
 }
 
 export interface AllocationResult {
@@ -74,12 +78,26 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     stockSector,
     sectorExposure,
     maxSectorPct = 30,
+    piotroskiFScore,
+    inFreefall,
+    marginTrendDeclining,
   } = input
 
   const base = BASE[conviction] ?? 0
 
   if (base === 0) {
     return noAlloc(`Conviction "${conviction}" does not trigger capital deployment — waiting for better entry.`)
+  }
+
+  // Falling-knife gate: never INITIATE a position in freefall. Cheap can get
+  // cheaper — the value+momentum literature is unambiguous that waiting for
+  // stabilization improves value-strategy returns. Existing positions may still
+  // average down below (subject to the thesis-health gate).
+  if (inFreefall && existingPositionValue === 0) {
+    return noAlloc(
+      `Falling knife — price is at its 6-month low with ≤−15% three-month momentum. ` +
+      `The thesis may be right, but the entry is wrong. Re-evaluate once price stabilizes.`
+    )
   }
 
   // Portfolio at capacity
@@ -153,12 +171,26 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     openPositionCount >= maxPositions * 0.9 ? 0.70 :
     openPositionCount >= maxPositions * 0.7 ? 0.85 : 1.00
 
-  // Averaging-down boost — price below our cost basis is a better entry
+  // Averaging-down boost — price below our cost basis is a better entry,
+  // but ONLY if the thesis is intact. A price drop alone is not confirmation;
+  // boosting into deteriorating fundamentals is how value investors blow up
+  // (Buffett averaged down on thesis reconfirmation, not on price).
   let avgDownMult = 1.0
   let avgDownDiscount = 0
+  let avgDownBlocked: string | undefined
   if (avgCostBasis && avgCostBasis > 0 && price < avgCostBasis) {
     avgDownDiscount = (avgCostBasis - price) / avgCostBasis
-    avgDownMult = avgDownDiscount >= 0.15 ? 1.30 : avgDownDiscount >= 0.10 ? 1.20 : avgDownDiscount >= 0.05 ? 1.10 : 1.0
+    const thesisIntact =
+      !marginTrendDeclining &&
+      !inFreefall &&
+      (piotroskiFScore === undefined || piotroskiFScore >= 5)
+    if (thesisIntact) {
+      avgDownMult = avgDownDiscount >= 0.15 ? 1.30 : avgDownDiscount >= 0.10 ? 1.20 : avgDownDiscount >= 0.05 ? 1.10 : 1.0
+    } else {
+      avgDownBlocked = inFreefall ? 'price in freefall'
+        : marginTrendDeclining ? 'operating margins declining'
+        : `Piotroski F-Score ${piotroskiFScore} < 5`
+    }
   }
 
   // Sector headroom trim — if approaching sector cap, scale down proportionally
@@ -213,7 +245,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
 
   const rationale = buildRationale({
     conviction, base, mosMult, scoreMult, crowdMult, avgDownMult, avgDownDiscount,
-    sectorTrimMult, finalPct, actualDollars, marginOfSafety, philosophyScore,
+    avgDownBlocked, sectorTrimMult, finalPct, actualDollars, marginOfSafety, philosophyScore,
     openPositionCount, maxPositions, stockSector, currentSectorPct, maxSectorPct,
   })
 
@@ -232,6 +264,7 @@ function buildRationale(p: {
   crowdMult: number
   avgDownMult: number
   avgDownDiscount: number
+  avgDownBlocked?: string
   sectorTrimMult: number
   finalPct: number
   actualDollars: number
@@ -269,7 +302,9 @@ function buildRationale(p: {
   }
 
   if (p.avgDownMult > 1.0) {
-    parts.push(`Averaging down: price ${(p.avgDownDiscount * 100).toFixed(1)}% below cost basis → +${((p.avgDownMult - 1) * 100).toFixed(0)}%.`)
+    parts.push(`Averaging down: price ${(p.avgDownDiscount * 100).toFixed(1)}% below cost basis, thesis intact → +${((p.avgDownMult - 1) * 100).toFixed(0)}%.`)
+  } else if (p.avgDownBlocked) {
+    parts.push(`Averaging-down boost WITHHELD (${p.avgDownBlocked}) — a lower price is not thesis confirmation.`)
   }
 
   if (p.sectorTrimMult < 1.0 && p.stockSector) {
