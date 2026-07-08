@@ -9,6 +9,7 @@ import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
+import { qualifiesForQualityMode, summarizeBlockers, QUALITY_SIZE_MULTIPLIER } from '@/lib/philosophy/quality-mode'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
@@ -333,14 +334,17 @@ export async function POST(request: NextRequest) {
 
   const sectorExposure: Record<string, number> = {}
   let deployedCapital = 0
+  let qualityDeployed = 0
   for (const p of remainingPositions) {
     const val = p.shares * (p.currentPrice ?? p.avgCostBasis)
     deployedCapital += val
+    if ((p as any).entryMode === 'quality') qualityDeployed += val
     const sector = p.stock?.sector
     if (sector) {
       sectorExposure[sector] = (sectorExposure[sector] ?? 0) + val
     }
   }
+  const qualityCap = (config.totalCapital ?? 10000) * ((config.maxQualityPct ?? 35) / 100)
 
   // ── Step 2: Build the buy candidate list ────────────────────────────────
   //
@@ -607,7 +611,22 @@ export async function POST(request: NextRequest) {
         iv.marginOfSafety >= dynamicMinMos &&
         bearOk
 
-      if (!passed) {
+      // ── Quality Mode fallback — "wonderful company at a fair price" ────────
+      // When the strict value gate fails (which is EVERY day in a hot market),
+      // wonderful/good businesses at fair prices can still enter at half size,
+      // capped at maxQualityPct of capital. Vetoes and the bear-case gate stand.
+      let entryMode: 'value' | 'quality' = 'value'
+      let qualityRationale: string | undefined
+      if (!passed && config.mode === 'paper' && (config.qualityModeEnabled ?? true) &&
+          philosophy.vetoedBy.length === 0 && bearOk) {
+        const qm = qualifiesForQualityMode(fundamentals, philosophy, iv)
+        if (qm.eligible && qualityDeployed < qualityCap) {
+          entryMode = 'quality'
+          qualityRationale = qm.rationale
+        }
+      }
+
+      if (!passed && entryMode === 'value') {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
@@ -672,10 +691,17 @@ export async function POST(request: NextRequest) {
           piotroskiFScore: fundamentals.piotroskiFScore,
           inFreefall: fundamentals.inFreefall,
           marginTrendDeclining: fundamentals.operatingMarginTrend === 'declining',
+          sizeMultiplier: entryMode === 'quality' ? QUALITY_SIZE_MULTIPLIER : undefined,
         })
 
         if (!allocation.canAllocate) {
           tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: allocation.reason })
+          continue
+        }
+
+        // Quality-mode exposure cap — hard clamp after allocation
+        if (entryMode === 'quality' && qualityDeployed + allocation.dollarAmount > qualityCap) {
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Quality-mode exposure cap reached ($${qualityDeployed.toFixed(0)} of $${qualityCap.toFixed(0)})` })
           continue
         }
 
@@ -700,12 +726,13 @@ export async function POST(request: NextRequest) {
           await prisma.paperPortfolioItem.update({ where: { id: existing.id }, data: { shares: newShares, avgCostBasis: newAvg, currentPrice: fundamentals.price } })
         } else {
           await prisma.paperPortfolioItem.create({
-            data: { stockId: stock.id, shares: allocation.shares, avgCostBasis: fundamentals.price, currentPrice: fundamentals.price, philosophyScore: philosophy.total, conviction: philosophy.conviction, mosAtPurchase: iv.marginOfSafety, auditTrail: [allocation.rationale, ...philosophy.auditTrail.slice(0, 9)] },
+            data: { stockId: stock.id, shares: allocation.shares, avgCostBasis: fundamentals.price, currentPrice: fundamentals.price, philosophyScore: philosophy.total, conviction: philosophy.conviction, mosAtPurchase: iv.marginOfSafety, entryMode, auditTrail: [...(qualityRationale ? [qualityRationale] : []), allocation.rationale, ...philosophy.auditTrail.slice(0, 8)] },
           })
         }
 
         if (fundamentals.sector) sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
         deployedCapital += allocation.dollarAmount
+        if (entryMode === 'quality') qualityDeployed += allocation.dollarAmount
         dailyBuys += 1
         dailyNotional += allocation.dollarAmount
 
@@ -713,12 +740,12 @@ export async function POST(request: NextRequest) {
           data: {
             ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${allocation.shares} shares of ${ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${combinedScore}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}${moatData ? ` | Moat: ${moatData.moatScore}/10 (${moatData.moatType})` : ''}`,
+            message: `PAPER BUY${entryMode === 'quality' ? ' (QUALITY — wonderful business at fair price, half-size)' : ''}: ${allocation.shares} shares of ${ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${combinedScore}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}% | ${philosophy.conviction.toUpperCase()}${moatData ? ` | Moat: ${moatData.moatScore}/10 (${moatData.moatType})` : ''}`,
             severity: 'buy',
           },
         })
 
-        tradeResults.push({ ticker, action: 'PAPER_BUY', shares: allocation.shares, price: fundamentals.price, dollarAmount: allocation.dollarAmount, positionPct: allocation.positionPct, score: philosophy.total, combinedScore, mos: iv.marginOfSafety, conviction: philosophy.conviction, rationale: allocation.rationale, grahamNumber: iv.grahamNumber, dcfValue: iv.dcfValue, intrinsicValue: iv.intrinsicValue, moatScore: moatData?.moatScore, moatType: moatData?.moatType, thesis: moatData?.thesis })
+        tradeResults.push({ ticker, action: 'PAPER_BUY', entryMode, shares: allocation.shares, price: fundamentals.price, dollarAmount: allocation.dollarAmount, positionPct: allocation.positionPct, score: philosophy.total, combinedScore, mos: iv.marginOfSafety, conviction: philosophy.conviction, rationale: allocation.rationale, grahamNumber: iv.grahamNumber, dcfValue: iv.dcfValue, intrinsicValue: iv.intrinsicValue, moatScore: moatData?.moatScore, moatType: moatData?.moatType, thesis: moatData?.thesis })
         await Promise.all([
           sendTradeNotification({ type: 'buy', ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
           pushTradeNotification({ type: 'buy', ticker, shares: allocation.shares, price: fundamentals.price, score: philosophy.total, mos: iv.marginOfSafety, conviction: philosophy.conviction }).catch(() => {}),
@@ -761,8 +788,12 @@ export async function POST(request: NextRequest) {
     screenerCandidatesScored: screenerBatch.length,
     totalAnalysed: watchlist.length,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
+    qualityBuys: tradeResults.filter(r => r.action === 'PAPER_BUY' && r.entryMode === 'quality').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,
     vetoed: tradeResults.filter(r => r.action === 'VETOED').length,
+    // Why nothing was bought, at a glance — the top skip/veto reasons this run
+    topBlockers: summarizeBlockers(tradeResults),
+    qualityExposure: { deployed: Math.round(qualityDeployed), cap: Math.round(qualityCap) },
     capitalDeployed: tradeResults.filter(r => r.action === 'PAPER_BUY').reduce((s: number, r: any) => s + (r.dollarAmount ?? 0), 0),
     results: tradeResults,
   }

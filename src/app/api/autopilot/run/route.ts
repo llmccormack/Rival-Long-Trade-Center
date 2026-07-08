@@ -6,6 +6,7 @@ import { applyGrahamCriteria } from '@/lib/graham/screener'
 import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
+import { qualifiesForQualityMode, summarizeBlockers, QUALITY_SIZE_MULTIPLIER } from '@/lib/philosophy/quality-mode'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
@@ -81,16 +82,19 @@ export async function POST(request: NextRequest) {
     include: { stock: true },
   })
   let deployedCapital = 0
+  let qualityDeployed = 0
   const sectorExposure: Record<string, number> = {}
   for (const p of openPaperPositions) {
     const val = p.shares * (p.currentPrice ?? p.avgCostBasis)
     deployedCapital += val
+    if ((p as any).entryMode === 'quality') qualityDeployed += val
     const sector = (p as any).stock?.sector
     if (sector) {
       sectorExposure[sector] = (sectorExposure[sector] ?? 0) + val
     }
   }
   const maxSectorPct = config.maxSectorPct ?? 30
+  const qualityCap = (config.totalCapital ?? 10000) * ((config.maxQualityPct ?? 35) / 100)
 
   const discountRate = ((config.discountRate ?? 10) / 100)
   const minCashReservePct = effectiveCashReserve
@@ -160,7 +164,22 @@ export async function POST(request: NextRequest) {
         iv.marginOfSafety >= effectiveMinMos &&
         bearOk
 
-      if (!passed) {
+      // ── Quality Mode fallback — "wonderful company at a fair price" ────────
+      // When the strict value gate fails (which is EVERY day in a hot market),
+      // wonderful/good businesses at fair prices can still enter at half size,
+      // capped at maxQualityPct of capital. Vetoes and the bear-case gate stand.
+      let entryMode: 'value' | 'quality' = 'value'
+      let qualityRationale: string | undefined
+      if (!passed && config.mode === 'paper' && (config.qualityModeEnabled ?? true) &&
+          philosophy.vetoedBy.length === 0 && bearOk) {
+        const qm = qualifiesForQualityMode(fundamentals, philosophy, iv)
+        if (qm.eligible && qualityDeployed < qualityCap) {
+          entryMode = 'quality'
+          qualityRationale = qm.rationale
+        }
+      }
+
+      if (!passed && entryMode === 'value') {
         const action = philosophy.vetoedBy.length > 0 ? 'VETOED' : 'SKIP'
         const skipReason = philosophy.vetoedBy.length > 0
           ? philosophy.vetoedBy.map((p: any) => p.title).join('; ')
@@ -242,7 +261,15 @@ export async function POST(request: NextRequest) {
           piotroskiFScore: fundamentals.piotroskiFScore,
           inFreefall: fundamentals.inFreefall,
           marginTrendDeclining: fundamentals.operatingMarginTrend === 'declining',
+          sizeMultiplier: entryMode === 'quality' ? QUALITY_SIZE_MULTIPLIER : undefined,
         })
+
+        // Quality-mode exposure cap — hard clamp after allocation
+        if (entryMode === 'quality' && allocation.canAllocate &&
+            qualityDeployed + allocation.dollarAmount > qualityCap) {
+          results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Quality-mode exposure cap reached ($${qualityDeployed.toFixed(0)} of $${qualityCap.toFixed(0)})` })
+          continue
+        }
 
         if (!allocation.canAllocate) {
           results.push({
@@ -289,7 +316,12 @@ export async function POST(request: NextRequest) {
               philosophyScore: philosophy.total,
               conviction: philosophy.conviction,
               mosAtPurchase: iv.marginOfSafety,
-              auditTrail: [allocation.rationale, ...philosophy.auditTrail.slice(0, 9)],
+              entryMode,
+              auditTrail: [
+                ...(qualityRationale ? [qualityRationale] : []),
+                allocation.rationale,
+                ...philosophy.auditTrail.slice(0, 8),
+              ],
             },
           })
         }
@@ -299,6 +331,7 @@ export async function POST(request: NextRequest) {
           sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
         }
         deployedCapital += allocation.dollarAmount
+        if (entryMode === 'quality') qualityDeployed += allocation.dollarAmount
         dailyBuys += 1
         dailyNotional += allocation.dollarAmount
 
@@ -306,7 +339,7 @@ export async function POST(request: NextRequest) {
           data: {
             ticker: item.stock.ticker,
             type: 'paper_buy',
-            message: `PAPER BUY: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}%`,
+            message: `PAPER BUY${entryMode === 'quality' ? ' (QUALITY — wonderful business at fair price, half-size)' : ''}: ${allocation.shares} shares of ${item.stock.ticker} @ $${fundamentals.price.toFixed(2)} ($${allocation.dollarAmount.toFixed(0)} · ${allocation.positionPct.toFixed(1)}% of capital) | Score: ${philosophy.total}/100 | MOS: ${iv.marginOfSafety.toFixed(1)}%`,
             severity: 'buy',
           },
         })
@@ -314,6 +347,7 @@ export async function POST(request: NextRequest) {
         results.push({
           ticker: item.stock.ticker,
           action: 'PAPER_BUY',
+          entryMode,
           shares: allocation.shares,
           price: fundamentals.price,
           dollarAmount: allocation.dollarAmount,
@@ -347,8 +381,12 @@ export async function POST(request: NextRequest) {
     totalCapital: config.totalCapital ?? 10000,
     watchlistScanned: watchlist.length,
     buys: results.filter(r => r.action.includes('BUY')).length,
+    qualityBuys: results.filter(r => r.action.includes('BUY') && r.entryMode === 'quality').length,
     skipped: results.filter(r => r.action === 'SKIP').length,
     vetoed: results.filter(r => r.action === 'VETOED').length,
+    // Why nothing was bought, at a glance — the top skip/veto reasons this run
+    topBlockers: summarizeBlockers(results),
+    qualityExposure: { deployed: Math.round(qualityDeployed), cap: Math.round(qualityCap) },
     capitalDeployed: results.filter(r => r.action.includes('BUY')).reduce((s, r) => s + (r.dollarAmount ?? 0), 0),
     // Macro context snapshot — shows market temperature at time of run
     macro: macro ? {

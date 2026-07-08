@@ -38,6 +38,8 @@ export interface AllocationInput {
   piotroskiFScore?: number       // averaging-down boost requires F ≥ 5 (thesis intact)
   inFreefall?: boolean           // at 6-mo low with ≤−15% 3-mo momentum — block NEW positions
   marginTrendDeclining?: boolean // Fisher Point 5 violation — no averaging-down boost
+  // Entry-mode sizing: quality-mode entries pass 0.5 (half-size — thinner MOS = smaller bet)
+  sizeMultiplier?: number
 }
 
 export interface AllocationResult {
@@ -81,6 +83,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
     piotroskiFScore,
     inFreefall,
     marginTrendDeclining,
+    sizeMultiplier = 1.0,
   } = input
 
   const base = BASE[conviction] ?? 0
@@ -218,7 +221,7 @@ export function allocateCapital(input: AllocationInput): AllocationResult {
 
   // ── Final allocation ──────────────────────────────────────────────────────
 
-  const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult * sectorTrimMult
+  const rawPct = base * mosMult * scoreMult * crowdMult * avgDownMult * sectorTrimMult * sizeMultiplier
   const finalPct = Math.min(rawPct, allowedPct, hardCap)
   const dollarTarget = totalCapital * finalPct
 

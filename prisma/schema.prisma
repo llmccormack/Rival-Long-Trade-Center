@@ -166,6 +166,9 @@ model PaperPortfolioItem {
   closedAt        DateTime?
   closePrice      Float?
   closeReason     String?
+  // 'value' = strict Graham entry (30% MOS). 'quality' = wonderful-business-at-
+  // fair-price entry (half-size, capped) — lets the two modes be measured separately.
+  entryMode       String   @default("value")
 
   @@index([stockId])
   @@index([isOpen])
@@ -194,6 +197,11 @@ model AutopilotConfig {
   maxDailyNotional  Float    @default(5000)  // max $ deployed in a single day
   maxSingleNotional Float    @default(2000)  // max $ for a single trade
   dailyRundown      String?                  // AI-generated market rundown from last run
+  // Quality Mode: "wonderful company at a fair price" (Buffett 2023) — a second
+  // buy path for hot markets when strict 30%-MOS deep value entries don't exist.
+  // Half-size positions, never above intrinsic value, capped at maxQualityPct.
+  qualityModeEnabled Boolean @default(true)
+  maxQualityPct      Float   @default(35)    // max % of capital in quality-mode entries
 }
 
 model MoatAnalysis {
