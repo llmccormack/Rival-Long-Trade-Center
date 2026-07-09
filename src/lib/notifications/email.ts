@@ -71,6 +71,33 @@ function html(body: string) {
 </html>`
 }
 
+// Weekly investor letter — markdown-ish plain text rendered into the house template
+export async function sendWeeklyLetter(content: string): Promise<void> {
+  const resend = getResend()
+  const to = getTo()
+  if (!resend || !to) return
+
+  const paragraphs = content
+    .split('\n')
+    .filter(l => l.trim().length > 0)
+    .map(l => `<p style="font-size:13px; line-height:1.65; color:#d4d4d8; margin:0 0 12px;">${l.replace(/\*\*([^*]+)\*\*/g, '<strong style="color:#f4f4f5">$1</strong>')}</p>`)
+    .join('')
+
+  const body = `
+    <h1>Weekly Investor Letter</h1>
+    <div class="sub">${new Date().toLocaleDateString('en-US', { dateStyle: 'full' })}</div>
+    <div class="card">${paragraphs}</div>
+  `
+  try {
+    await resend.emails.send({
+      from: FROM,
+      to,
+      subject: `📜 Weekly Investor Letter — ${new Date().toISOString().slice(0, 10)}`,
+      html: html(body),
+    })
+  } catch { /* notifications are best-effort */ }
+}
+
 export async function sendTradeNotification(trade: TradeNotification): Promise<void> {
   const resend = getResend()
   const to = getTo()

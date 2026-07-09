@@ -19,6 +19,7 @@ import { getSecTickers, getDailyBatch } from '@/lib/sec/tickers'
 import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
 import { getDailyBatch as getValueUniverseBatch } from '@/lib/universe/tickers'
 import { analyzeMoat, moatScoreAdjustment } from '@/lib/ai/moat-analysis'
+import { recordPostMortem } from '@/lib/ai/post-mortem'
 import { upsertStockScore } from '@/lib/philosophy/persist-score'
 
 // POST /api/autopilot/full-run
@@ -289,6 +290,8 @@ export async function POST(request: NextRequest) {
           },
         })
         sellResults.push({ ticker: pos.stock.ticker, action: 'SOLD_NEWS_VETO', flag: posNews.hardVetoFlags[0], price: f.price })
+        // Decision journal: compare outcome vs the thesis recorded at purchase
+        recordPostMortem(pos, f.price, `News veto: ${posNews.hardVetoFlags[0]}`).catch(() => {})
         await Promise.all([
           sendVetoAlert({ ticker: pos.stock.ticker, reason: posNews.hardVetoFlags[0], isHeld: false }).catch(() => {}),
           pushVetoAlert({ ticker: pos.stock.ticker, reason: posNews.hardVetoFlags[0], isHeld: false }).catch(() => {}),
@@ -316,6 +319,8 @@ export async function POST(request: NextRequest) {
           },
         })
         sellResults.push({ ticker: pos.stock.ticker, action: 'PAPER_SELL', reason: sellSignal.reason, urgency: sellSignal.urgency, price: f.price })
+        // Decision journal: compare outcome vs the thesis recorded at purchase
+        recordPostMortem(pos, f.price, sellSignal.reason).catch(() => {})
         await Promise.all([
           sendTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
           pushTradeNotification({ type: 'sell', ticker: pos.stock.ticker, shares: pos.shares, price: f.price, reason: sellSignal.reason }).catch(() => {}),
@@ -367,6 +372,37 @@ export async function POST(request: NextRequest) {
     }
   }
   const qualityCap = (config.totalCapital ?? 10000) * ((config.maxQualityPct ?? 35) / 100)
+
+  // ── Drawdown circuit breaker ───────────────────────────────────────────────
+  // Portfolio down >10% from its 5-snapshot peak → halt NEW buys (sells above
+  // already ran — risk reduction stays active). Something is wrong: either the
+  // market broke or the engine did. Both deserve a pause and a human look.
+  let circuitBreaker = false
+  try {
+    const recentSnaps = await prisma.portfolioSnapshot.findMany({ orderBy: { date: 'desc' }, take: 5 })
+    if (recentSnaps.length >= 3) {
+      const latest = recentSnaps[0].totalValue
+      const peak = Math.max(...recentSnaps.map(s => s.totalValue))
+      if (peak > 0 && (peak - latest) / peak > 0.10) {
+        circuitBreaker = true
+        await prisma.alert.create({
+          data: {
+            ticker: 'PORTFOLIO',
+            type: 'fundamental_change',
+            message: `CIRCUIT BREAKER: portfolio down ${(((peak - latest) / peak) * 100).toFixed(1)}% from its recent peak — new buys halted this run. Review positions before re-engaging.`,
+            severity: 'danger',
+          },
+        }).catch(() => {})
+        if (process.env.NTFY_TOPIC) {
+          fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC}`, {
+            method: 'POST',
+            headers: { Title: 'Circuit breaker tripped', Priority: 'high', Tags: 'octagonal_sign' },
+            body: `Portfolio down ${(((peak - latest) / peak) * 100).toFixed(1)}% from recent peak. Buys halted for today's run.`,
+          }).catch(() => {})
+        }
+      }
+    }
+  } catch { /* breaker is best-effort */ }
 
   // ── Step 2: Build the buy candidate list ────────────────────────────────
   //
@@ -748,6 +784,35 @@ export async function POST(request: NextRequest) {
           allocation.dollarAmount = allocation.shares * fundamentals.price
         }
 
+        // Drawdown circuit breaker — no new capital while the book is bleeding
+        if (circuitBreaker) {
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Circuit breaker: portfolio >10% off recent peak — buys halted, sells still active' })
+          continue
+        }
+
+        // Earnings blackout — a thin-MOS entry the day before a report is a
+        // coin flip, not an investment. Wait for the numbers, then re-score.
+        const earnings = await getEarningsCalendar(ticker).catch(() => [])
+        const upcoming = earnings.find(e => {
+          const days = (new Date(e.date).getTime() - Date.now()) / 86_400_000
+          return days >= 0 && days <= 7
+        })
+        if (upcoming) {
+          tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Earnings ${upcoming.date} within 7 days — binary-event blackout; re-evaluate after the report` })
+          continue
+        }
+
+        // Price cross-validation — one bad quote corrupts MOS, sizing, and cost
+        // basis simultaneously. FMP and Yahoo must agree within 3% to trade.
+        const [yahooQuote] = await getQuickQuotes([ticker]).catch(() => [undefined])
+        if (yahooQuote?.price && yahooQuote.price > 0) {
+          const divergence = Math.abs(yahooQuote.price - fundamentals.price) / fundamentals.price
+          if (divergence > 0.03) {
+            tradeResults.push({ ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Price sources disagree: FMP $${fundamentals.price.toFixed(2)} vs Yahoo $${yahooQuote.price.toFixed(2)} (${(divergence * 100).toFixed(1)}%) — data-quality hold` })
+            continue
+          }
+        }
+
         if (existing) {
           const newShares = existing.shares + allocation.shares
           const newAvg = (existing.shares * existing.avgCostBasis + allocation.shares * fundamentals.price) / newShares
@@ -833,6 +898,7 @@ export async function POST(request: NextRequest) {
     screenerCandidatesScored: screenerBatch.length,
     totalAnalysed: watchlist.length,
     marketCrashCarveOut: marketCrash,
+    circuitBreaker,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     qualityBuys: tradeResults.filter(r => r.action === 'PAPER_BUY' && r.entryMode === 'quality').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,

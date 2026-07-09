@@ -358,3 +358,36 @@ model OrderIntent {
   @@index([createdAt])
   @@index([status])
 }
+
+// ─── Decision Journal ────────────────────────────────────────────────────────
+// Every closed trade gets an AI post-mortem comparing the outcome against the
+// thesis recorded at purchase. Aggregated lessons are how the engine's
+// thresholds get better — funds call this a decision journal.
+model TradePostMortem {
+  id               String   @id @default(cuid())
+  ticker           String
+  entryMode        String   @default("value")
+  openedAt         DateTime
+  closedAt         DateTime
+  holdingDays      Int
+  returnPct        Float
+  dividendsEarned  Float    @default(0)
+  closeReason      String
+  thesisAtPurchase String[] @default([])
+  verdict          String   // thesis_played_out | thesis_wrong | exit_discipline | exit_premature | inconclusive
+  lessons          String
+  createdAt        DateTime @default(now())
+
+  @@index([ticker])
+  @@index([createdAt])
+  @@index([verdict])
+}
+
+// Weekly investor letter — generated Sunday by cron, emailed + shown in chat
+model WeeklyLetter {
+  id          String   @id @default(cuid())
+  generatedAt DateTime @default(now())
+  content     String
+
+  @@index([generatedAt])
+}

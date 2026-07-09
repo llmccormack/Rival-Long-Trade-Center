@@ -71,6 +71,12 @@ const TOOLS: Anthropic.Tool[] = [
       'Top watchlist candidates by score, INCLUDING the last recorded skip reason for each — shows exactly what each stock is failing on and which are closest to qualifying.',
     input_schema: { type: 'object' as const, properties: {} },
   },
+  {
+    name: 'get_journal',
+    description:
+      'The decision journal: AI post-mortems of closed trades (verdict on whether the thesis played out, was wrong, or the exit was the mistake — with lessons) and the latest weekly investor letter.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
 ]
 
 // ─── Tool implementations ─────────────────────────────────────────────────────
@@ -264,6 +270,30 @@ async function runTool(name: string, input: Record<string, unknown>): Promise<un
         lastAnalyzedAt: w.lastAnalyzedAt,
         price: w.stock.intrinsicValues?.[0]?.currentPrice,
       }))
+    }
+
+    case 'get_journal': {
+      const [postMortems, letter] = await Promise.all([
+        prisma.tradePostMortem.findMany({ orderBy: { createdAt: 'desc' }, take: 8 }),
+        prisma.weeklyLetter.findFirst({ orderBy: { generatedAt: 'desc' } }),
+      ])
+      return {
+        postMortems: postMortems.map(m => ({
+          ticker: m.ticker,
+          entryMode: m.entryMode,
+          holdingDays: m.holdingDays,
+          returnPct: m.returnPct,
+          closeReason: m.closeReason,
+          verdict: m.verdict,
+          lessons: m.lessons,
+          closedAt: m.closedAt,
+        })),
+        verdictCounts: postMortems.reduce<Record<string, number>>((acc, m) => {
+          acc[m.verdict] = (acc[m.verdict] ?? 0) + 1
+          return acc
+        }, {}),
+        latestWeeklyLetter: letter ? { generatedAt: letter.generatedAt, content: letter.content } : null,
+      }
     }
 
     default:

@@ -7,7 +7,8 @@ import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { qualifiesForQualityMode, summarizeBlockers, QUALITY_SIZE_MULTIPLIER } from '@/lib/philosophy/quality-mode'
-import { isMarketInFreefall } from '@/lib/fmp/client'
+import { isMarketInFreefall, getEarningsCalendar } from '@/lib/fmp/client'
+import { getQuickQuotes } from '@/lib/yahoo/quick-quote'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
@@ -100,6 +101,18 @@ export async function POST(request: NextRequest) {
   }
   const maxSectorPct = config.maxSectorPct ?? 30
   const qualityCap = (config.totalCapital ?? 10000) * ((config.maxQualityPct ?? 35) / 100)
+
+  // Drawdown circuit breaker — no new buys while the portfolio is >10% off
+  // its recent peak (see full-run for the alerting version of this check)
+  let circuitBreaker = false
+  try {
+    const recentSnaps = await prisma.portfolioSnapshot.findMany({ orderBy: { date: 'desc' }, take: 5 })
+    if (recentSnaps.length >= 3) {
+      const latest = recentSnaps[0].totalValue
+      const peak = Math.max(...recentSnaps.map(s => s.totalValue))
+      circuitBreaker = peak > 0 && (peak - latest) / peak > 0.10
+    }
+  } catch { /* breaker is best-effort */ }
 
   const discountRate = ((config.discountRate ?? 10) / 100)
   const minCashReservePct = effectiveCashReserve
@@ -308,6 +321,33 @@ export async function POST(request: NextRequest) {
             continue
           }
           allocation.dollarAmount = allocation.shares * fundamentals.price
+        }
+
+        // Drawdown circuit breaker — no new capital while the book is bleeding
+        if (circuitBreaker) {
+          results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: 'Circuit breaker: portfolio >10% off recent peak — buys halted' })
+          continue
+        }
+
+        // Earnings blackout — no entries within 7 days of a report
+        const earnings = await getEarningsCalendar(item.stock.ticker).catch(() => [])
+        const upcoming = earnings.find(e => {
+          const days = (new Date(e.date).getTime() - Date.now()) / 86_400_000
+          return days >= 0 && days <= 7
+        })
+        if (upcoming) {
+          results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Earnings ${upcoming.date} within 7 days — binary-event blackout` })
+          continue
+        }
+
+        // Price cross-validation — FMP and Yahoo must agree within 3% to trade
+        const [yahooQuote] = await getQuickQuotes([item.stock.ticker]).catch(() => [undefined])
+        if (yahooQuote?.price && yahooQuote.price > 0) {
+          const divergence = Math.abs(yahooQuote.price - fundamentals.price) / fundamentals.price
+          if (divergence > 0.03) {
+            results.push({ ticker: item.stock.ticker, action: 'SKIP', score: philosophy.total, mos: iv.marginOfSafety, reason: `Price sources disagree: FMP $${fundamentals.price.toFixed(2)} vs Yahoo $${yahooQuote.price.toFixed(2)} — data-quality hold` })
+            continue
+          }
         }
 
         if (existing) {

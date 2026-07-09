@@ -25,6 +25,12 @@ restartPolicyMaxRetries = 3
 #     Method:   POST
 #     Headers:  Authorization: Bearer $CRON_SECRET
 #
+#   Weekly investor letter (Sunday morning):
+#     Schedule: 0 14 * * 0          (9am ET Sunday, i.e. 14:00 UTC)
+#     URL:      $RAILWAY_PUBLIC_DOMAIN/api/reports/weekly
+#     Method:   POST
+#     Headers:  Authorization: Bearer $CRON_SECRET
+#
 # Required environment variables:
 #   CRON_SECRET          - shared secret for cron authorization
 #   NEXT_PUBLIC_APP_URL  - your Railway public domain (e.g. https://your-app.up.railway.app)
