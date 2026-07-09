@@ -22,6 +22,7 @@ export interface MacroContext {
   sp500Cape: number
   capeSource: 'multpl' | 'cache' | 'fallback'  // 'fallback' = live fetch failed, using hardcoded estimate
   treasury10yr: number            // decimal (0.045 = 4.5%)
+  tbill3mo: number                // decimal — what idle cash actually earns (paper accounting)
   marketTemperature: 'cold' | 'fair' | 'warm' | 'hot' | 'extreme'
   // Adjustments applied on top of user config when market is expensive/cheap
   cashReserveAdj: number          // additive % to minCashReservePct (e.g. +10 → hold more cash)
@@ -120,13 +121,15 @@ function deriveScoreAdj(cape: number): number {
 // Deliberately conservative (expensive market → autopilot gets pickier, not looser).
 const FALLBACK_CAPE = 34
 const FALLBACK_TREASURY_PCT = 4.3
+const FALLBACK_TBILL_PCT = 4.0
 
 export async function getMarketContext(): Promise<MacroContext> {
   if (_cached && Date.now() < _expiry) return _cached
 
-  const [cape, treasury10yrPct] = await Promise.all([
+  const [cape, treasury10yrPct, tbill3moPct] = await Promise.all([
     fetchMultplCape(),
     fetchFredLatest('DGS10'),
+    fetchFredLatest('DGS3MO'),
   ])
 
   const capeSource: MacroContext['capeSource'] =
@@ -137,8 +140,10 @@ export async function getMarketContext(): Promise<MacroContext> {
 
   const resolvedCape = cape ?? (_cached?.sp500Cape ?? FALLBACK_CAPE)
   const resolvedTreasuryPct = treasury10yrPct ?? (_cached ? _cached.treasury10yr * 100 : FALLBACK_TREASURY_PCT)
+  const resolvedTbillPct = tbill3moPct ?? (_cached ? _cached.tbill3mo * 100 : FALLBACK_TBILL_PCT)
 
   const treasury10yr = resolvedTreasuryPct / 100
+  const tbill3mo = resolvedTbillPct / 100
   const earningsYield = 1 / resolvedCape
   const excessEarningsYield = earningsYield - treasury10yr
 
@@ -146,6 +151,7 @@ export async function getMarketContext(): Promise<MacroContext> {
     sp500Cape: resolvedCape,
     capeSource,
     treasury10yr,
+    tbill3mo,
     marketTemperature: deriveTemperature(resolvedCape),
     cashReserveAdj: deriveCashAdj(resolvedCape),
     minScoreAdj: deriveScoreAdj(resolvedCape),

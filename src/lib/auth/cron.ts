@@ -1,16 +1,14 @@
 import { NextRequest } from 'next/server'
+import { hasValidSession } from './session'
 
+// FIXED (fail-open bug): the old version allowed any request with NO auth
+// header on the theory that it "came from the browser UI" — meaning a bare
+// curl could trigger autopilot runs, rebalances, and the admin cleanup.
+// Callers must now present either the CRON_SECRET bearer token (machine
+// callers: Railway cron, scripts) or a valid login session cookie (browser UI).
 export function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   const authHeader = request.headers.get('authorization')
-
-  // External caller with correct Bearer token — always allow
   if (secret && authHeader?.replace('Bearer ', '') === secret) return true
-
-  // No auth header = request came from the browser UI — always allow
-  // (External cron/API callers must provide the Bearer token above)
-  if (!authHeader) return true
-
-  // Auth header present but wrong token
-  return false
+  return hasValidSession(request)
 }

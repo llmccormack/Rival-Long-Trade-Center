@@ -774,6 +774,34 @@ export async function getStockPeers(ticker: string): Promise<string[]> {
 }
 
 // ─── Historical Price (for performance chart vs SPY) ─────────────────────────
+// ─── Market-regime detection ──────────────────────────────────────────────────
+// Is the WHOLE market (SPY) in freefall? During a crash, stock-level freefall
+// is uninformative — everything is at its 6-month low, and that is precisely
+// when Graham entries finally appear. Callers use this to suspend the
+// per-stock falling-knife veto so the bot can buy the fear (Buffett 2008).
+export async function isMarketInFreefall(): Promise<boolean> {
+  const cacheKey = 'market:spy-freefall'
+  const cached = cache.get<boolean>(cacheKey)
+  if (cached !== null) return cached
+
+  const to = new Date().toISOString().slice(0, 10)
+  const from = new Date(Date.now() - 300 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const prices = await getHistoricalPrices('SPY', from, to).catch(() => [] as DailyPrice[])
+  let result = false
+  if (prices.length >= 70) {
+    const closes = prices.map(p => p.close).filter(c => c > 0)
+    const price = closes[closes.length - 1]
+    const last126 = closes.slice(-126)
+    const low6mo = Math.min(...last126)
+    const close63ago = closes[closes.length - 64] ?? closes[0]
+    const momentum3mo = close63ago > 0 ? price / close63ago - 1 : 0
+    const vsLow = low6mo > 0 ? (price - low6mo) / low6mo : 1
+    result = momentum3mo <= -0.15 && vsLow <= 0.02
+  }
+  cache.set(cacheKey, result, FUNDAMENTALS_TTL)
+  return result
+}
+
 export interface DailyPrice {
   date: string
   close: number

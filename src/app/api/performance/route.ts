@@ -80,8 +80,28 @@ export async function GET() {
       }
     } catch { /* benchmark is best-effort */ }
 
-    // Alpha vs SPY
+    // VTV — the style benchmark. Beating SPY is the wrong bar for a value
+    // strategy in a growth-led market; alpha vs a value ETF answers the real
+    // question: does this system beat what $0 of code would buy?
+    let vtvReturn: number | null = null
+    try {
+      const vtv = await getHistoricalPrices('VTV', fromStr, toStr)
+      if (vtv.length >= 2) {
+        vtvReturn = ((vtv[vtv.length - 1].close - vtv[0].close) / vtv[0].close) * 100
+      }
+    } catch { /* benchmark is best-effort */ }
+
+    // Income the old accounting ignored: accrued dividends on positions and
+    // T-bill yield on idle cash. Without these, disciplined cash-holding
+    // looks like failure and value stocks' dividends vanish.
+    const dividendsEarned = positions.reduce((s, p) => s + (p.dividendsEarned ?? 0), 0)
+    const cashYieldAccrued = (config as any)?.cashYieldAccrued ?? 0
+    const totalGainLossInclIncome = totalGainLoss + dividendsEarned + cashYieldAccrued
+    const totalGainLossInclIncomePct = totalCost > 0 ? (totalGainLossInclIncome / totalCost) * 100 : 0
+
+    // Alpha vs SPY (price-only) and vs the style benchmark (income-inclusive)
     const alpha = spyReturn !== null ? totalGainLossPct - spyReturn : null
+    const alphaVsVtv = vtvReturn !== null ? totalGainLossInclIncomePct - vtvReturn : null
 
     // Best and worst open positions
     const positionsWithPnl = open.map(p => ({
@@ -128,10 +148,15 @@ export async function GET() {
         totalGainLoss: Math.round(totalGainLoss * 100) / 100,
         totalGainLossPct: Math.round(totalGainLossPct * 100) / 100,
         realisedGainLoss: Math.round(realisedGainLoss * 100) / 100,
+        dividendsEarned: Math.round(dividendsEarned * 100) / 100,
+        cashYieldAccrued: Math.round(cashYieldAccrued * 100) / 100,
+        totalGainLossInclIncomePct: Math.round(totalGainLossInclIncomePct * 100) / 100,
         openPositions: open.length,
         closedPositions: closed.length,
         spyReturn: spyReturn !== null ? Math.round(spyReturn * 100) / 100 : null,
+        vtvReturn: vtvReturn !== null ? Math.round(vtvReturn * 100) / 100 : null,
         alpha: alpha !== null ? Math.round(alpha * 100) / 100 : null,
+        alphaVsVtv: alphaVsVtv !== null ? Math.round(alphaVsVtv * 100) / 100 : null,
         fromDate: fromStr,
         toDate: toStr,
       },
@@ -158,14 +183,19 @@ export async function POST() {
     const totalValue = open.reduce((s, p) => s + p.shares * (p.currentPrice ?? p.avgCostBasis), 0)
     const gainLossPct = totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0
 
-    // Get SPY price for today
+    // Benchmark prices for today — SPY (market) and VTV (value style)
     let spyPrice: number | null = null
+    let vtvPrice: number | null = null
     try {
       const today = new Date().toISOString().slice(0, 10)
       const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
       const { getHistoricalPrices } = await import('@/lib/fmp/client')
-      const spy = await getHistoricalPrices('SPY', yesterday, today)
+      const [spy, vtv] = await Promise.all([
+        getHistoricalPrices('SPY', yesterday, today),
+        getHistoricalPrices('VTV', yesterday, today).catch(() => []),
+      ])
       spyPrice = spy[spy.length - 1]?.close ?? null
+      vtvPrice = vtv[vtv.length - 1]?.close ?? null
     } catch { /* best effort */ }
 
     const snapshot = await prisma.portfolioSnapshot.create({
@@ -174,6 +204,7 @@ export async function POST() {
         totalCost,
         gainLossPct,
         spyPrice,
+        vtvPrice,
         positions: open.map(p => ({
           ticker: p.stock.ticker,
           shares: p.shares,

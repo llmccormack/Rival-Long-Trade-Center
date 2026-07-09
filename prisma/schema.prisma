@@ -202,6 +202,11 @@ model AutopilotConfig {
   // Half-size positions, never above intrinsic value, capped at maxQualityPct.
   qualityModeEnabled Boolean @default(true)
   maxQualityPct      Float   @default(35)    // max % of capital in quality-mode entries
+  // Idle cash earns the 3-month T-bill rate (accrued daily by full-run).
+  // Without this, a bot whose signature move is holding cash looks broken on
+  // the dashboard at exactly the moments its discipline is working.
+  cashYieldAccrued   Float   @default(0)
+  lastStallAlertAt   DateTime?               // dead-man's-switch alert dedupe
 }
 
 model MoatAnalysis {
@@ -303,6 +308,7 @@ model PortfolioSnapshot {
   totalCost  Float
   gainLossPct Float
   spyPrice   Float?
+  vtvPrice   Float?   // value-style benchmark — beating SPY is the wrong bar for a value strategy
   positions  Json
 
   @@index([date])

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db/client'
 import { generateRundown } from '@/lib/ai/rundown'
-import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks, getQuote } from '@/lib/fmp/client'
+import { getCompleteFundamentals, getTickerNews, getEarningsCalendar, getInsiderTransactions, quickScreen, screenStocks, getQuote, isMarketInFreefall } from '@/lib/fmp/client'
 import { getYahooFundamentals } from '@/lib/yahoo/fundamentals'
 import { getMarketCandidates } from '@/lib/yahoo/screener'
 import { applyGrahamCriteria } from '@/lib/graham/screener'
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
   try {
     const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
     const pending = await prisma.shadowDecision.findMany({
-      where: { return90d: null, decidedAt: { lte: cutoff90 } },
+      where: { return90d: null, price90d: null, decidedAt: { lte: cutoff90 } },
       orderBy: { decidedAt: 'asc' },
       take: 15,
     })
@@ -77,10 +77,14 @@ export async function POST(request: NextRequest) {
           },
         }).catch(() => {})
       } else {
-        // Ticker gone (delisted/acquired) — mark so we stop retrying
+        // Ticker unresolvable (delisted/acquired). Do NOT record 0% — a
+        // delisting is usually −100% (bankruptcy) or +premium (buyout);
+        // recording zero would launder the tails out of the counterfactual.
+        // Sentinel price90d=-1 stops retries; return90d stays null so these
+        // rows are excluded from averages instead of biasing them.
         await prisma.shadowDecision.update({
           where: { id: sd.id },
-          data: { price90d: 0, return90d: 0 },
+          data: { price90d: -1 },
         }).catch(() => {})
       }
     }
@@ -229,6 +233,12 @@ export async function POST(request: NextRequest) {
   const macro = await getMarketContext()
   const macroAudit = macro ? [formatMarketContext(macro)] : []
 
+  // Market-regime carve-out: when SPY itself is in freefall, EVERY stock sits
+  // at its 6-month low — the per-stock falling-knife veto would block the exact
+  // moment Graham entries appear (March 2009, March 2020). During a market-wide
+  // crash the stock-level freefall flag is suspended. Buy the fear.
+  const marketCrash = await isMarketInFreefall().catch(() => false)
+
   const effectiveMinScore    = (config.minPhilosophyScore ?? 45) + Math.min(macro?.minScoreAdj ?? 0, 5)
   const effectiveMinMos      = config.minMarginOfSafety ?? 15
   const effectiveCashReserve = (config.minCashReservePct ?? 15) + Math.min(macro?.cashReserveAdj ?? 0, 5)
@@ -315,9 +325,21 @@ export async function POST(request: NextRequest) {
           ] : []),
         ])
       } else {
+        // Held — refresh price and accrue dividends. Paper P&L previously
+        // ignored dividends entirely, understating a value strategy by
+        // ~2-3%/yr and making discipline look like underperformance.
+        // Smooth daily accrual of the TTM dividend (÷252 trading days)
+        // approximates ex-date payments closely enough for paper accounting.
+        const dailyDividend =
+          f.dividendPerShare && f.dividendPerShare > 0
+            ? pos.shares * f.dividendPerShare / 252
+            : 0
         await prisma.paperPortfolioItem.update({
           where: { id: pos.id },
-          data: { currentPrice: f.price },
+          data: {
+            currentPrice: f.price,
+            ...(dailyDividend > 0 ? { dividendsEarned: { increment: dailyDividend } } : {}),
+          },
         })
       }
 
@@ -602,6 +624,12 @@ export async function POST(request: NextRequest) {
         else                              { dynamicMinScore = Math.min(65, baseScore + 15); dynamicMinMos = Math.min(30, baseMos + 15) }
       }
 
+      // Market-crash carve-out — stock-level freefall is uninformative when
+      // the whole market is falling; this is when value entries appear.
+      if (marketCrash && fundamentals.inFreefall) {
+        fundamentals.inFreefall = false
+      }
+
       // Bear-case gate: the MOS must survive a zero-growth stress test
       const bearOk = iv.bearCaseMos === undefined || iv.bearCaseMos >= 0
 
@@ -760,6 +788,23 @@ export async function POST(request: NextRequest) {
 
   const screenerResult   = discoveryResults.find(r => r.action === 'FMP_SCREENER')
   const universeResult   = discoveryResults.find(r => r.action === 'UNIVERSE_FALLBACK')
+  // ── Idle-cash yield accrual ────────────────────────────────────────────────
+  // Real idle cash earns the T-bill rate; paper cash previously earned 0%.
+  // For a strategy whose signature move is holding cash in expensive markets,
+  // that misstatement made discipline look like failure. Accrue one trading
+  // day of 3-month T-bill yield on undeployed capital per full run (runs are
+  // daily on market days).
+  try {
+    const idleCash = Math.max(0, (config.totalCapital ?? 10000) - deployedCapital)
+    const tbill = macro?.tbill3mo ?? 0.04
+    if (idleCash > 0 && isMarketDay()) {
+      await prisma.autopilotConfig.update({
+        where: { id: 'singleton' },
+        data: { cashYieldAccrued: { increment: idleCash * tbill / 252 } },
+      })
+    }
+  } catch { /* accounting accrual must not abort the run */ }
+
   const summary = {
     ranAt: new Date().toISOString(),
     mode: config.mode,
@@ -787,6 +832,7 @@ export async function POST(request: NextRequest) {
     manualWatchlistItems: manualItems.length,
     screenerCandidatesScored: screenerBatch.length,
     totalAnalysed: watchlist.length,
+    marketCrashCarveOut: marketCrash,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     qualityBuys: tradeResults.filter(r => r.action === 'PAPER_BUY' && r.entryMode === 'quality').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,

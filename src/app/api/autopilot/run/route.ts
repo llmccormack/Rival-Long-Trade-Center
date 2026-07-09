@@ -7,6 +7,7 @@ import { calculateIntrinsicValue } from '@/lib/graham/intrinsic-value'
 import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { qualifiesForQualityMode, summarizeBlockers, QUALITY_SIZE_MULTIPLIER } from '@/lib/philosophy/quality-mode'
+import { isMarketInFreefall } from '@/lib/fmp/client'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { isAuthorized } from '@/lib/auth/cron'
 import { isMarketDay } from '@/lib/utils/market-hours'
@@ -70,6 +71,10 @@ export async function POST(request: NextRequest) {
   // This makes the autopilot behave like Buffett: aggressive in fear, patient in greed.
   const macro = await getMarketContext()
   const macroAudit = macro ? [formatMarketContext(macro)] : []
+
+  // Market-regime carve-out: when SPY itself is in freefall, stock-level
+  // freefall is uninformative — that is when Graham entries appear.
+  const marketCrash = await isMarketInFreefall().catch(() => false)
 
   // Apply macro adjustments on top of user config
   const effectiveMinScore     = (config.minPhilosophyScore ?? 45) + Math.min(macro?.minScoreAdj ?? 0, 5)
@@ -152,6 +157,12 @@ export async function POST(request: NextRequest) {
       const stockMinScore = isDeepValue
         ? Math.min(effectiveMinScore, (config.minPhilosophyScore ?? 45) + 3)
         : effectiveMinScore
+
+      // Market-crash carve-out — suspend the per-stock falling-knife veto
+      // when the whole market is crashing (see full-run for rationale)
+      if (marketCrash && fundamentals.inFreefall) {
+        fundamentals.inFreefall = false
+      }
 
       // Bear-case gate: the MOS must survive a zero-growth stress test.
       // (Undefined bear-case is tolerated in paper mode — the scorer already
