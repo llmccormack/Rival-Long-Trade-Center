@@ -5,15 +5,16 @@ import { useState, useRef, useEffect } from 'react'
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  toolsUsed?: string[]
 }
 
 const SUGGESTED_QUESTIONS = [
   "Why hasn't the bot made any buys yet?",
-  "Which stock is closest to qualifying for a buy?",
-  "What's the current market temperature?",
-  "How is my paper portfolio performing?",
-  "Explain the margin of safety requirement",
-  "What would make a stock pass all the criteria?",
+  "Which watchlist stock is closest to qualifying, and what's blocking it?",
+  "Run the full analysis on BRK.B right now",
+  "Have our skips and vetoes been right? Check the shadow book.",
+  "How is the portfolio doing including dividends and cash yield?",
+  "Why did we buy each of my current positions?",
 ]
 
 // Minimal markdown renderer — handles bold, inline code, headers, bullets, line breaks.
@@ -143,7 +144,9 @@ export default function ChatPage() {
       })
       const data = await res.json()
       if (data.content) {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.content }])
+        setMessages(prev => [...prev, { role: 'assistant', content: data.content, toolsUsed: data.toolsUsed }])
+      } else if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${data.error}` }])
       }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Please try again.' }])
@@ -187,18 +190,28 @@ export default function ChatPage() {
                     ? 'bg-violet-600 text-white text-sm leading-relaxed'
                     : 'bg-zinc-900 border border-zinc-800'
                 }`}>
+                  {msg.role === 'assistant' && msg.toolsUsed && msg.toolsUsed.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2 pb-2 border-b border-zinc-800">
+                      {[...new Set(msg.toolsUsed)].map((t, j) => (
+                        <span key={j} className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400/90 font-mono">
+                          ✓ {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
                 </div>
               </div>
             ))}
             {loading && (
               <div className="flex justify-start">
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3">
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 flex items-center gap-2">
                   <div className="flex gap-1">
                     <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                     <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                     <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
+                  <span className="text-xs text-zinc-500">checking the records…</span>
                 </div>
               </div>
             )}
