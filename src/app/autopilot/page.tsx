@@ -11,8 +11,13 @@ interface RunResult {
   mode: string
   watchlistScanned: number
   buys: number
+  qualityBuys?: number
   skipped: number
   vetoed: number
+  topBlockers?: Array<{ reason: string; count: number }>
+  qualityExposure?: { deployed: number; cap: number }
+  circuitBreaker?: boolean
+  marketCrashCarveOut?: boolean
   macro?: {
     sp500Cape: number
     marketTemperature: string
@@ -427,6 +432,60 @@ export default function AutopilotPage() {
           </div>
         )
       })()}
+
+      {/* Safety flags — only render when something unusual is active */}
+      {(lastRun?.circuitBreaker || lastRun?.marketCrashCarveOut) && (
+        <div className="flex flex-col gap-2">
+          {lastRun?.circuitBreaker && (
+            <div className="rounded-xl border border-red-800/50 bg-red-900/15 px-4 py-3 flex items-center gap-3">
+              <span className="text-lg">🛑</span>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-red-400">Circuit breaker active</div>
+                <p className="text-xs text-zinc-400 mt-0.5">Portfolio is &gt;10% off its recent peak — new buys are halted until it recovers. Sells remain active.</p>
+              </div>
+            </div>
+          )}
+          {lastRun?.marketCrashCarveOut && (
+            <div className="rounded-xl border border-sky-800/50 bg-sky-900/15 px-4 py-3 flex items-center gap-3">
+              <span className="text-lg">🌊</span>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-sky-400">Market-crash carve-out active</div>
+                <p className="text-xs text-zinc-400 mt-0.5">SPY itself is in freefall — the per-stock falling-knife veto is suspended so the engine can buy the fear.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Why nothing was bought — the recorded blockers from the last run */}
+      {(lastRun?.topBlockers ?? []).length > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-zinc-800 bg-zinc-900/80 flex items-center justify-between flex-wrap gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-widest text-zinc-500">Top Blockers — why the last run didn&apos;t buy more</h2>
+            {lastRun?.qualityExposure && (
+              <span className="text-[10px] font-mono text-zinc-600">
+                Quality mode: <span className="text-sky-400">${lastRun.qualityExposure.deployed.toLocaleString()}</span> / ${lastRun.qualityExposure.cap.toLocaleString()} deployed
+              </span>
+            )}
+          </div>
+          <div className="px-4 py-3 flex flex-col gap-1.5">
+            {(lastRun?.topBlockers ?? []).map((b, i) => {
+              const maxCount = lastRun?.topBlockers?.[0]?.count ?? 1
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="font-mono text-sm font-bold text-amber-400 w-8 text-right shrink-0">{b.count}×</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="h-1 rounded-full bg-zinc-800 mb-1">
+                      <div className="h-1 rounded-full bg-amber-600/60" style={{ width: `${Math.max(8, (b.count / maxCount) * 100)}%` }} />
+                    </div>
+                    <p className="text-xs text-zinc-400 truncate" title={b.reason}>{b.reason}</p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Daily AI Market Rundown */}
       {dailyRundown && (

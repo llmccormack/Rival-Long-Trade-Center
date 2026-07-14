@@ -106,6 +106,8 @@ export async function GET() {
     // Best and worst open positions
     const positionsWithPnl = open.map(p => ({
       ticker: p.stock.ticker,
+      entryMode: (p as { entryMode?: string }).entryMode ?? 'value',
+      dividendsEarned: Math.round((p.dividendsEarned ?? 0) * 100) / 100,
       shares: p.shares,
       avgCost: p.avgCostBasis,
       currentPrice: p.currentPrice ?? p.avgCostBasis,

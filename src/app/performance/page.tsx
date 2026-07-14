@@ -34,15 +34,21 @@ interface PerfData {
     totalGainLoss: number
     totalGainLossPct: number
     realisedGainLoss: number
+    dividendsEarned?: number
+    cashYieldAccrued?: number
+    totalGainLossInclIncomePct?: number
     openPositions: number
     closedPositions: number
     spyReturn: number | null
+    vtvReturn?: number | null
     alpha: number | null
+    alphaVsVtv?: number | null
     fromDate: string
     toDate: string
   }
   positions?: Array<{
     ticker: string
+    entryMode?: string
     shares: number
     avgCost: number
     currentPrice: number
@@ -221,6 +227,34 @@ export default function PerformancePage() {
         />
       </div>
 
+      {/* Honest accounting row — income the old numbers ignored */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          label="Return incl. Income"
+          value={s.totalGainLossInclIncomePct != null ? `${s.totalGainLossInclIncomePct >= 0 ? '+' : ''}${s.totalGainLossInclIncomePct.toFixed(2)}%` : 'N/A'}
+          sub="With dividends + cash yield"
+          color={s.totalGainLossInclIncomePct != null ? (s.totalGainLossInclIncomePct >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-zinc-600'}
+        />
+        <StatCard
+          label="Dividends Accrued"
+          value={s.dividendsEarned != null ? `$${s.dividendsEarned.toFixed(2)}` : '$0.00'}
+          sub="TTM rate, accrued daily"
+          color="text-emerald-400"
+        />
+        <StatCard
+          label="Cash Yield"
+          value={s.cashYieldAccrued != null ? `$${s.cashYieldAccrued.toFixed(2)}` : '$0.00'}
+          sub="T-bill rate on idle cash"
+          color="text-sky-400"
+        />
+        <StatCard
+          label="Alpha vs VTV"
+          value={s.alphaVsVtv != null ? `${s.alphaVsVtv >= 0 ? '+' : ''}${s.alphaVsVtv.toFixed(2)}%` : 'N/A'}
+          sub={s.vtvReturn != null ? `Value ETF returned ${s.vtvReturn >= 0 ? '+' : ''}${s.vtvReturn.toFixed(2)}%` : 'The honest benchmark'}
+          color={s.alphaVsVtv != null ? (s.alphaVsVtv >= 0 ? 'text-violet-400' : 'text-red-400') : 'text-zinc-600'}
+        />
+      </div>
+
       {/* Realised P&L if any */}
       {s.realisedGainLoss !== 0 && (
         <div className={cn(
@@ -294,7 +328,7 @@ export default function PerformancePage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900/40">
-                {['Ticker', 'Shares', 'Avg Cost', 'Current', 'Return', 'Score', 'MOS @ Buy', 'Conviction'].map(h => (
+                {['Ticker', 'Mode', 'Shares', 'Avg Cost', 'Current', 'Return', 'Score', 'MOS @ Buy', 'Conviction'].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-600">{h}</th>
                 ))}
               </tr>
@@ -303,6 +337,13 @@ export default function PerformancePage() {
               {positions.map(p => (
                 <tr key={p.ticker} className="hover:bg-zinc-800/30 transition-colors">
                   <td className="px-4 py-3 font-mono font-bold text-zinc-100">{p.ticker}</td>
+                  <td className="px-4 py-3">
+                    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase border',
+                      p.entryMode === 'quality'
+                        ? 'border-sky-800 bg-sky-900/30 text-sky-400'
+                        : 'border-violet-800 bg-violet-900/30 text-violet-400'
+                    )}>{p.entryMode ?? 'value'}</span>
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-400">{p.shares}</td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-500">${p.avgCost.toFixed(2)}</td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-300">${p.currentPrice.toFixed(2)}</td>
