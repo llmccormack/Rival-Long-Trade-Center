@@ -11,7 +11,7 @@ async function withTimeout<T>(p: Promise<T>, fallback: T, ms = 2000): Promise<T>
 
 async function getDashboardData() {
   try {
-    const [topScores, openPositions, config, alerts] = await Promise.all([
+    const [topScores, openPositions, config, alerts, latestLetter] = await Promise.all([
       withTimeout(
         prisma.stockScore.findMany({
           orderBy: { score: 'desc' },
@@ -30,12 +30,26 @@ async function getDashboardData() {
       ),
       withTimeout(prisma.autopilotConfig.findUnique({ where: { id: 'singleton' } }), null),
       withTimeout(prisma.alert.count({ where: { isRead: false } }), 0),
+      withTimeout(prisma.weeklyLetter.findFirst({ orderBy: { generatedAt: 'desc' } }), null),
     ])
 
-    return { topScores, openPositions, config, alerts }
+    return { topScores, openPositions, config, alerts, latestLetter }
   } catch {
-    return { topScores: [], openPositions: [], config: null, alerts: 0 }
+    return { topScores: [], openPositions: [], config: null, alerts: 0, latestLetter: null }
   }
+}
+
+// Weekdays elapsed since a date — powers the "autopilot stalled" pill
+function weekdaysSince(from: Date): number {
+  let count = 0
+  const d = new Date(from)
+  const now = new Date()
+  while (d < now) {
+    d.setDate(d.getDate() + 1)
+    const day = d.getDay()
+    if (day !== 0 && day !== 6) count++
+  }
+  return count
 }
 
 function ScoreBar({ score, threshold = 45 }: { score: number; threshold?: number }) {
@@ -56,10 +70,19 @@ function ScoreBar({ score, threshold = 45 }: { score: number; threshold?: number
 }
 
 export default async function DashboardPage() {
-  const { topScores, openPositions, config, alerts } = await getDashboardData()
+  const { topScores, openPositions, config, alerts, latestLetter } = await getDashboardData()
 
   const lastRun = config?.lastRunAt ? new Date(config.lastRunAt) : null
   const lastRunResult = config?.lastRunResult as any
+  const isEnabled = config?.isEnabled !== false
+  const stalledDays = lastRun ? weekdaysSince(lastRun) : null
+  const isStalled = isEnabled && stalledDays !== null && stalledDays > 2
+  const circuitBreaker = lastRunResult?.circuitBreaker === true
+  const crashCarveOut = lastRunResult?.marketCrashCarveOut === true
+  const topBlockers = (lastRunResult?.topBlockers ?? []) as Array<{ reason: string; count: number }>
+  const letterExcerpt = latestLetter
+    ? (latestLetter.content as string).split(/\s+/).slice(0, 42).join(' ')
+    : null
   const threshold = config?.minPhilosophyScore ?? 45
   const buySignals = topScores.filter((s: any) => s.signal === 'BUY').length
   const aboveThreshold = topScores.filter((s: any) => s.score >= threshold).length
@@ -102,6 +125,42 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
+      {/* ── System status strip ─────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn(
+          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
+          isEnabled
+            ? 'border-emerald-800 bg-emerald-900/20 text-emerald-400'
+            : 'border-red-800 bg-red-900/20 text-red-400'
+        )}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', isEnabled ? 'bg-emerald-500' : 'bg-red-500')} />
+          Autopilot {isEnabled ? 'on' : 'OFF — kill switch'}
+        </span>
+        <span className={cn(
+          'rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
+          config?.mode === 'live'
+            ? 'border-emerald-800 bg-emerald-900/20 text-emerald-400'
+            : 'border-amber-800 bg-amber-900/20 text-amber-400'
+        )}>
+          {config?.mode === 'live' ? 'Live' : 'Paper'} mode
+        </span>
+        {isStalled && (
+          <Link href="/autopilot" className="rounded-full border border-red-800 bg-red-900/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-red-400 hover:bg-red-900/40">
+            ⚠ Stalled — no run in {stalledDays} weekdays
+          </Link>
+        )}
+        {circuitBreaker && (
+          <Link href="/autopilot" className="rounded-full border border-red-800 bg-red-900/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-red-400 hover:bg-red-900/40">
+            🛑 Circuit breaker — buys halted
+          </Link>
+        )}
+        {crashCarveOut && (
+          <span className="rounded-full border border-sky-800 bg-sky-900/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-sky-400">
+            🌊 Crash carve-out — buying fear
+          </span>
+        )}
+      </div>
+
       {/* ── Key metrics ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -138,6 +197,56 @@ export default async function DashboardPage() {
             <div className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">{label}</div>
             <div className={cn('mt-1.5 text-2xl font-mono font-bold tabular-nums', color)}>{value}</div>
             <div className="mt-0.5 text-[11px] text-zinc-600">{sub}</div>
+          </Link>
+        ))}
+      </div>
+
+      {/* ── Why no buys + latest letter, side by side ────────────────────── */}
+      {(topBlockers.length > 0 || letterExcerpt) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {topBlockers.length > 0 && (
+            <Link href="/autopilot" className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 hover:border-zinc-700 transition-colors">
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 mb-2.5">
+                Why the last run didn&apos;t buy more
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {topBlockers.slice(0, 3).map((b, i) => (
+                  <div key={i} className="flex items-baseline gap-2.5">
+                    <span className="font-mono text-sm font-bold text-amber-400 w-8 text-right shrink-0">{b.count}×</span>
+                    <span className="text-xs text-zinc-400 truncate">{b.reason}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2.5 text-[11px] text-zinc-600">Full breakdown →</div>
+            </Link>
+          )}
+          {letterExcerpt && (
+            <Link href="/journal" className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 hover:border-zinc-700 transition-colors">
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 mb-2.5">
+                Latest investor letter · {new Date(latestLetter!.generatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </div>
+              <p className="text-xs leading-relaxed text-zinc-400">{letterExcerpt}…</p>
+              <div className="mt-2.5 text-[11px] text-zinc-600">Read the letter →</div>
+            </Link>
+          )}
+        </div>
+      )}
+
+      {/* ── Ask the Analyst — one-tap questions ──────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-zinc-600 mr-1">Ask the analyst</span>
+        {[
+          'Why no buys lately?',
+          "What's closest to qualifying?",
+          'How are we doing vs VTV?',
+          'What have our sells taught us?',
+        ].map(q => (
+          <Link
+            key={q}
+            href={`/chat?q=${encodeURIComponent(q)}`}
+            className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-400 hover:border-violet-700 hover:text-zinc-200 hover:bg-violet-900/10 transition-colors"
+          >
+            💬 {q}
           </Link>
         ))}
       </div>
