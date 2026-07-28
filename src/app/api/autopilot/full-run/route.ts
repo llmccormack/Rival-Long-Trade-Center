@@ -10,6 +10,7 @@ import { scoreBuyDecision } from '@/lib/philosophy/scorer'
 import { scoreSellDecision } from '@/lib/philosophy/sell-scorer'
 import { allocateCapital } from '@/lib/philosophy/capital-allocator'
 import { qualifiesForQualityMode, summarizeBlockers, QUALITY_SIZE_MULTIPLIER } from '@/lib/philosophy/quality-mode'
+import { computeSleeveRebalance, type SleeveAction } from '@/lib/philosophy/deployment'
 import { getMarketContext, formatMarketContext } from '@/lib/macro/market-context'
 import { sendTradeNotification, sendRunSummary, sendVetoAlert } from '@/lib/notifications/email'
 import { pushTradeNotification, pushRunSummary, pushVetoAlert } from '@/lib/notifications/push'
@@ -256,6 +257,9 @@ export async function POST(request: NextRequest) {
 
   for (const pos of openPositions) {
     try {
+      // The ETF cash sleeve has no fundamentals — never run it through the
+      // business-level sell scorer; it is rebalanced separately after buys.
+      if ((pos as { entryMode?: string }).entryMode === 'etf_sleeve') continue
       // Yahoo first (free, unlimited) → FMP fallback
       let f = await getYahooFundamentals(pos.stock.ticker)
       if (f.price <= 0) f = await getCompleteFundamentals(pos.stock.ticker)
@@ -362,12 +366,16 @@ export async function POST(request: NextRequest) {
   const sectorExposure: Record<string, number> = {}
   let deployedCapital = 0
   let qualityDeployed = 0
+  let individualDeployed = 0   // non-sleeve names only — drives the sleeve rebalance
   for (const p of remainingPositions) {
     const val = p.shares * (p.currentPrice ?? p.avgCostBasis)
     deployedCapital += val
-    if ((p as any).entryMode === 'quality') qualityDeployed += val
+    const mode = (p as { entryMode?: string }).entryMode
+    if (mode === 'quality') qualityDeployed += val
+    if (mode !== 'etf_sleeve') individualDeployed += val
+    // The sleeve is broad-market — it does not consume single-sector headroom
     const sector = p.stock?.sector
-    if (sector) {
+    if (sector && mode !== 'etf_sleeve') {
       sectorExposure[sector] = (sectorExposure[sector] ?? 0) + val
     }
   }
@@ -825,6 +833,7 @@ export async function POST(request: NextRequest) {
 
         if (fundamentals.sector) sectorExposure[fundamentals.sector] = (sectorExposure[fundamentals.sector] ?? 0) + allocation.dollarAmount
         deployedCapital += allocation.dollarAmount
+        individualDeployed += allocation.dollarAmount
         if (entryMode === 'quality') qualityDeployed += allocation.dollarAmount
         dailyBuys += 1
         dailyNotional += allocation.dollarAmount
@@ -853,6 +862,73 @@ export async function POST(request: NextRequest) {
 
   const screenerResult   = discoveryResults.find(r => r.action === 'FMP_SCREENER')
   const universeResult   = discoveryResults.find(r => r.action === 'UNIVERSE_FALLBACK')
+
+  // ── ETF cash sleeve rebalance ("invested by default") ──────────────────────
+  // After individual-name buys, sweep leftover cash (beyond the reserve) into a
+  // broad value ETF so capital works instead of sitting idle in an expensive
+  // market. Shrinks automatically as the engine finds more individual names.
+  // Suspended while the circuit breaker is tripped (don't add risk while bleeding).
+  let sleeveAction: SleeveAction | null = null
+  if ((config.etfSleeveEnabled ?? true) && config.mode === 'paper' && !circuitBreaker) {
+    try {
+      const etfTicker = (config.etfSleeveTicker ?? 'VTV').toUpperCase()
+      const sleevePos = remainingPositions.find(p => (p as { entryMode?: string }).entryMode === 'etf_sleeve')
+      const etfQuote = await getQuote(etfTicker).catch(() => null)
+      const etfPrice = etfQuote?.price ?? sleevePos?.currentPrice ?? 0
+      if (etfPrice > 0) {
+        const currentSleeveShares = sleevePos?.shares ?? 0
+        sleeveAction = computeSleeveRebalance({
+          totalCapital: config.totalCapital ?? 10000,
+          targetInvestedPct: config.targetInvestedPct ?? 80,
+          minCashReservePct: effectiveCashReserve,
+          individualDeployed,
+          currentSleeveValue: currentSleeveShares * etfPrice,
+          currentSleeveShares,
+          etfPrice,
+        })
+        if (sleeveAction.action !== 'hold') {
+          const etfStock = await prisma.stock.upsert({
+            where: { ticker: etfTicker },
+            create: { ticker: etfTicker, name: `${etfTicker} — value ETF sleeve`, sector: 'ETF' },
+            update: {},
+          })
+          const newShares = sleeveAction.action === 'buy'
+            ? currentSleeveShares + sleeveAction.shares
+            : currentSleeveShares - sleeveAction.shares
+          if (sleevePos) {
+            if (newShares <= 0) {
+              await prisma.paperPortfolioItem.update({
+                where: { id: sleevePos.id },
+                data: { isOpen: false, closedAt: new Date(), closePrice: etfPrice, currentPrice: etfPrice, closeReason: 'Sleeve fully redeployed into individual names' },
+              })
+            } else {
+              await prisma.paperPortfolioItem.update({
+                where: { id: sleevePos.id },
+                data: { shares: newShares, currentPrice: etfPrice },
+              })
+            }
+          } else if (sleeveAction.action === 'buy') {
+            await prisma.paperPortfolioItem.create({
+              data: {
+                stockId: etfStock.id, shares: sleeveAction.shares, avgCostBasis: etfPrice,
+                currentPrice: etfPrice, entryMode: 'etf_sleeve', conviction: 'sleeve',
+                auditTrail: ['ETF cash sleeve — staying invested by default', sleeveAction.reason],
+              },
+            })
+          }
+          deployedCapital += sleeveAction.dollarDelta
+          await prisma.alert.create({
+            data: {
+              ticker: etfTicker, type: 'paper_buy',
+              message: `SLEEVE ${sleeveAction.action.toUpperCase()}: ${sleeveAction.shares} ${etfTicker} @ $${etfPrice.toFixed(2)} — ${sleeveAction.reason}`,
+              severity: sleeveAction.action === 'buy' ? 'buy' : 'info',
+            },
+          }).catch(() => {})
+        }
+      }
+    } catch { /* sleeve is best-effort — never abort the run */ }
+  }
+
   // ── Idle-cash yield accrual ────────────────────────────────────────────────
   // Real idle cash earns the T-bill rate; paper cash previously earned 0%.
   // For a strategy whose signature move is holding cash in expensive markets,
@@ -899,6 +975,10 @@ export async function POST(request: NextRequest) {
     totalAnalysed: watchlist.length,
     marketCrashCarveOut: marketCrash,
     circuitBreaker,
+    sleeve: sleeveAction && sleeveAction.action !== 'hold'
+      ? { action: sleeveAction.action, shares: sleeveAction.shares, reason: sleeveAction.reason }
+      : null,
+    investedPct: config.totalCapital ? Math.round((deployedCapital / config.totalCapital) * 100) : null,
     buys: tradeResults.filter(r => r.action === 'PAPER_BUY').length,
     qualityBuys: tradeResults.filter(r => r.action === 'PAPER_BUY' && r.entryMode === 'quality').length,
     skipped: tradeResults.filter(r => r.action === 'SKIP').length,

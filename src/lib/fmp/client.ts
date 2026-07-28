@@ -219,6 +219,42 @@ export async function getQuote(ticker: string): Promise<FMPQuote | null> {
   } catch { return null }
 }
 
+// Batched quote fetch (one call) — used by the daily brief for index ETFs.
+export async function getQuotes(tickers: string[]): Promise<FMPQuote[]> {
+  if (tickers.length === 0) return []
+  try {
+    const data = await get<FMPQuote[]>(`/quote/${tickers.map(t => t.toUpperCase()).join(',')}`)
+    return Array.isArray(data) ? data : []
+  } catch { return [] }
+}
+
+export interface MarketMover {
+  ticker: string
+  name: string
+  price: number
+  changePct: number
+}
+
+// Biggest market movers today — "what's dominating right now" for the brief.
+export async function getMarketMovers(direction: 'gainers' | 'losers'): Promise<MarketMover[]> {
+  const cacheKey = `movers:${direction}`
+  const cached = cache.get<MarketMover[]>(cacheKey)
+  if (cached) return cached
+  try {
+    const data = await get<Array<{ symbol: string; name: string; price: number; changesPercentage: number }>>(
+      `/stock_market/${direction}`
+    )
+    const result = (Array.isArray(data) ? data : []).slice(0, 6).map(d => ({
+      ticker: d.symbol,
+      name: d.name,
+      price: d.price,
+      changePct: d.changesPercentage,
+    }))
+    cache.set(cacheKey, result, NEWS_TTL)  // 30-min freshness is fine for a brief
+    return result
+  } catch { return [] }
+}
+
 // ─── News ─────────────────────────────────────────────────────────────────────
 
 export interface FMPNewsItem {

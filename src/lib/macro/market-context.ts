@@ -97,22 +97,29 @@ function deriveTemperature(cape: number): MacroContext['marketTemperature'] {
   return 'extreme'
 }
 
+// REBALANCED toward "invested by default" (Buffett-consistent): CAPE is
+// informational, not a cash-timing trigger. Sitting in cash because the INDEX
+// is expensive is top-down market timing — 15 years of "expensive" CAPE would
+// have kept a timer in cash through a tripling. We still LEAN IN when the market
+// is genuinely cheap (opportunities are richest then), but we no longer HOARD
+// when it is expensive. Business-quality discipline lives at the stock level
+// (vetoes, valuation ceiling), not here.
 function deriveCashAdj(cape: number): number {
-  if (cape < 15) return -10  // rare opportunity — reduce cash reserve, deploy
+  if (cape < 15) return -10  // rare opportunity — deploy the reserve, lean in
   if (cape < 20) return  -5  // below fair value — slight aggression
-  if (cape < 25) return   0  // fair value — neutral
-  if (cape < 30) return   8  // above fair — hold more cash
-  if (cape < 35) return  15  // expensive — significant caution
-  return 20                   // extreme overvaluation — Buffett mode: hoard cash
+  return 0                    // fair-or-expensive — no index-timed cash hoarding
 }
 
+// Symmetric with cash: lower the individual bar when the market is genuinely
+// cheap (everything is discounted), but do NOT raise it just because the index
+// is expensive. Raising the score bar in expensive markets was a second,
+// correlated timing brake stacked on top of the cash one — the exact "anti-
+// investing in good markets" behavior we're removing. Stock-level CAPE and the
+// bear-case MOS still keep us from overpaying for any individual name.
 function deriveScoreAdj(cape: number): number {
-  if (cape < 15) return -10  // market cheap — lower individual bar (everything discounted)
+  if (cape < 15) return -10  // market cheap — lower individual bar
   if (cape < 20) return  -5
-  if (cape < 25) return   0
-  if (cape < 30) return   8  // require better quality when market expensive
-  if (cape < 35) return  15
-  return 20                   // only the very best ideas deserve capital
+  return 0                    // fair-or-expensive — no index-timed bar-raising
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

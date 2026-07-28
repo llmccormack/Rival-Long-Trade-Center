@@ -22,7 +22,12 @@
 import type { StockFundamentals, IntrinsicValueResult } from '@/types'
 import type { PhilosophyScore } from './scorer'
 
-export const QUALITY_SIZE_MULTIPLIER = 0.5
+// Quality Mode is now a CO-PRIMARY engine, not a throttled fallback. In a market
+// where deep 30%-MOS discounts don't exist, buying wonderful businesses at fair
+// prices IS the strategy — so these entries size like any other (full-size). The
+// per-position cap and sector caps still limit concentration; the quality GATES
+// (tier, ROIC≥15%, score≥65, expected CAGR≥10%, MOS≥5%, F≥6) still define quality.
+export const QUALITY_SIZE_MULTIPLIER = 1.0
 
 export interface QualityModeCheck {
   eligible: boolean

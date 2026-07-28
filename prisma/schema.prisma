@@ -201,7 +201,14 @@ model AutopilotConfig {
   // buy path for hot markets when strict 30%-MOS deep value entries don't exist.
   // Half-size positions, never above intrinsic value, capped at maxQualityPct.
   qualityModeEnabled Boolean @default(true)
-  maxQualityPct      Float   @default(35)    // max % of capital in quality-mode entries
+  maxQualityPct      Float   @default(70)    // max % of capital in quality-mode entries (raised: quality is now co-primary)
+  // "Invested by default" — the bot AIMS to hold this % in equities. Cash the
+  // engine can't place in individual names flows into a broad value ETF sleeve
+  // rather than sitting idle. Removes the cash drag of a value strategy in a
+  // market where deep discounts are scarce, without forcing marginal single-name bets.
+  targetInvestedPct  Float   @default(80)
+  etfSleeveEnabled   Boolean @default(true)
+  etfSleeveTicker    String  @default("VTV")  // Vanguard Value ETF — broad, cheap, value-tilted
   // Idle cash earns the 3-month T-bill rate (accrued daily by full-run).
   // Without this, a bot whose signature move is holding cash looks broken on
   // the dashboard at exactly the moments its discipline is working.

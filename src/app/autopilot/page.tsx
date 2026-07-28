@@ -18,6 +18,8 @@ interface RunResult {
   qualityExposure?: { deployed: number; cap: number }
   circuitBreaker?: boolean
   marketCrashCarveOut?: boolean
+  investedPct?: number | null
+  sleeve?: { action: string; shares: number; reason: string } | null
   macro?: {
     sp500Cape: number
     marketTemperature: string
@@ -453,6 +455,26 @@ export default function AutopilotPage() {
                 <p className="text-xs text-zinc-400 mt-0.5">SPY itself is in freefall — the per-stock falling-knife veto is suspended so the engine can buy the fear.</p>
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Invested-by-default status: how much capital is working + sleeve activity */}
+      {lastRun?.investedPct != null && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">Invested</span>
+            <span className={cn('font-mono text-lg font-bold', lastRun.investedPct >= 70 ? 'text-emerald-400' : lastRun.investedPct >= 40 ? 'text-amber-400' : 'text-zinc-400')}>
+              {lastRun.investedPct}%
+            </span>
+          </div>
+          <div className="flex-1 min-w-[120px] h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-600/60" style={{ width: `${Math.min(100, lastRun.investedPct)}%` }} />
+          </div>
+          {lastRun?.sleeve && (
+            <span className="text-[11px] font-mono text-sky-400">
+              Sleeve {lastRun.sleeve.action} {lastRun.sleeve.shares} sh
+            </span>
           )}
         </div>
       )}

@@ -45,6 +45,19 @@ All POST, all with header `Authorization: Bearer $CRON_SECRET`:
       starves Shiller EPS, earnings stability, F-Score history, and makes the
       backtest untrustworthy. Everything analytical gets better with this one change.
 
+## 5b. Strategy rebalance — new tunables (optional, sensible defaults set)
+
+The strategy was shifted to **invested-by-default** (quality-first, no CAPE cash
+timing, value-ETF sleeve). Defaults are live; adjust in Settings only if you want:
+
+- [ ] Review **`targetInvestedPct`** (default 80) — how much capital the bot aims
+      to keep in equities; the ETF sleeve fills the gap so cash isn't idle.
+- [ ] Review **`etfSleeveTicker`** (default `VTV`) — the value-ETF the sleeve buys.
+      Change to `AVUV` (small-cap value), `QUAL`, `SCHD`, etc. if you prefer.
+- [ ] **`maxQualityPct`** was raised 35 → 70; **`etfSleeveEnabled`** default on.
+      No action needed unless you want to dial them back.
+- [ ] Nothing new to set on Railway for this — all applied via `prisma db push`.
+
 ## 6. Evidence gathering (after the above)
 
 - [ ] **Run the real-engine backtest:**

@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { prisma } from '@/lib/db/client'
 import { cn, formatCurrency } from '@/lib/utils'
 import Link from 'next/link'
+import { DailyBrief } from '@/components/dashboard/DailyBrief'
 
 async function withTimeout<T>(p: Promise<T>, fallback: T, ms = 2000): Promise<T> {
   return Promise.race([p, new Promise<T>(r => setTimeout(() => r(fallback), ms))])
@@ -160,6 +161,9 @@ export default async function DashboardPage() {
           </span>
         )}
       </div>
+
+      {/* ── Daily brief ─────────────────────────────────────────────────── */}
+      <DailyBrief />
 
       {/* ── Key metrics ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -369,21 +373,6 @@ export default async function DashboardPage() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* ── Daily rundown ────────────────────────────────────────────────── */}
-      {config?.dailyRundown && (
-        <div className="rounded-xl border border-violet-900/30 bg-violet-950/20 p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-violet-500">Morning Rundown</span>
-            {lastRun && (
-              <span className="text-[10px] text-zinc-700">
-                {new Date(lastRun.toLocaleString()).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-zinc-300 leading-relaxed">{config.dailyRundown as string}</p>
         </div>
       )}
 

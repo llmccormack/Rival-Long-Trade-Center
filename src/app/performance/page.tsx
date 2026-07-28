@@ -339,10 +339,12 @@ export default function PerformancePage() {
                   <td className="px-4 py-3 font-mono font-bold text-zinc-100">{p.ticker}</td>
                   <td className="px-4 py-3">
                     <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase border',
-                      p.entryMode === 'quality'
+                      p.entryMode === 'etf_sleeve'
+                        ? 'border-teal-800 bg-teal-900/30 text-teal-400'
+                        : p.entryMode === 'quality'
                         ? 'border-sky-800 bg-sky-900/30 text-sky-400'
                         : 'border-violet-800 bg-violet-900/30 text-violet-400'
-                    )}>{p.entryMode ?? 'value'}</span>
+                    )}>{p.entryMode === 'etf_sleeve' ? 'sleeve' : (p.entryMode ?? 'value')}</span>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-400">{p.shares}</td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-500">${p.avgCost.toFixed(2)}</td>
